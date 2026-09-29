@@ -1,0 +1,10 @@
+{
+  "port": 3000,
+  "respawnRadius": 8,
+  "spawnOverride": null,
+  "_comment_supabase": "Optional: fill in your Supabase project URL and anon key to enable public room listing",
+  "supabase": {
+    "url": "https://bejvmvsvxuxvkptyzbzz.supabase.co",
+    "anonKey": "sb_publishable_ypQEe6INOfFt-TCViClo-A_141MCwBw"
+  }
+}

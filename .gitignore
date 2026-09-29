@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# OS / Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Large archives and temporary conversion files
+*.zip
+*.mcworld
+tmp_*
+worlds/w*
+
+# Logs & environment
+*.log
+.env
