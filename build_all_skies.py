@@ -4,32 +4,41 @@ from PIL import Image, ImageEnhance, ImageOps
 SKIES_DIR = 'public/skies'
 os.makedirs(SKIES_DIR, exist_ok=True)
 
-def slice_cubemap_3x2(img, target_size=(512, 512)):
+def slice_cubemap_3x2(img, target_size=(1024, 1024)):
     w, h = img.size
     fw, fh = w // 3, h // 2
     
-    # 3x2 Grid standard OptiFine / MCPatcher / FabricSkyboxes:
-    # Row 0: ny (-Y), py (+Y), pz (+Z)
-    # Row 1: nx (-X), nz (-Z), px (+X)
+    # Standard Minecraft OptiFine / MCPatcher / FabricSkyboxes 3x2 cubemap layout:
+    # Row 0:
+    #   Tile 0 (col 0): ny  (-Y, Bottom)
+    #   Tile 1 (col 1): py  (+Y, Top)
+    #   Tile 2 (col 2): nz  (-Z, North / Back)
+    # Row 1:
+    #   Tile 3 (col 0): nx  (-X, West / Left)
+    #   Tile 4 (col 1): pz  (+Z, South / Front)
+    #   Tile 5 (col 2): px  (+X, East / Right)
     faces = {
         'ny': img.crop((0, 0, fw, fh)),
         'py': img.crop((fw, 0, fw*2, fh)),
-        'pz': img.crop((fw*2, 0, fw*3, fh)),
+        'nz': img.crop((fw*2, 0, fw*3, fh)),
         'nx': img.crop((0, fh, fw, fh*2)),
-        'nz': img.crop((fw, fh, fw*2, fh*2)),
+        'pz': img.crop((fw, fh, fw*2, fh*2)),
         'px': img.crop((fw*2, fh, fw*3, fh*2))
     }
     out = {}
     for k, f in faces.items():
         if f.mode != 'RGB':
             f = f.convert('RGB')
-        out[k] = f.resize(target_size, Image.Resampling.LANCZOS)
+        # Maintain aspect ratio and resize to crisp resolution
+        cur_w, cur_h = f.size
+        dest_size = (min(cur_w, target_size[0]), min(cur_h, target_size[1]))
+        out[k] = f.resize(dest_size, Image.Resampling.LANCZOS)
     return out
 
 def save_faces(faces_dict, out_path):
     os.makedirs(out_path, exist_ok=True)
     for name, img in faces_dict.items():
-        img.save(os.path.join(out_path, f'{name}.jpg'), quality=85)
+        img.save(os.path.join(out_path, f'{name}.jpg'), quality=90)
 
 # --- 1. Realistic Atmosphere ---
 def process_realistic():
@@ -52,7 +61,7 @@ def process_realistic():
         sunset_img = get_img('assets/minecraft/mcpatcher/sky/world0/sunset.png')
         save_faces(slice_cubemap_3x2(sunset_img), f'{SKIES_DIR}/realistic/sunset')
 
-        # Night (night.png with starfield blend)
+        # Night (night.png)
         night_img = get_img('assets/minecraft/mcpatcher/sky/world0/night.png')
         save_faces(slice_cubemap_3x2(night_img), f'{SKIES_DIR}/realistic/night')
 
@@ -120,46 +129,51 @@ def process_dramatic():
 # --- 3. Anime Clouds (Default) ---
 def process_anime():
     print('Processing Anime Clouds...')
-    # Use existing public/sky faces
-    src_sky = 'public/sky'
-    if os.path.exists(src_sky):
+    # Extract directly from AnimeClouds zip for exact 100% seamless continuity
+    zip_path = 'AnimeClouds [Only Day] [2048x].zip'
+    if os.path.exists(zip_path):
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            data = zf.read('assets/minecraft/optifine/sky/world0/skybox.png')
+            skybox_img = Image.open(io.BytesIO(data)).convert('RGB')
+            day_faces = slice_cubemap_3x2(skybox_img)
+            save_faces(day_faces, f'{SKIES_DIR}/anime/day')
+    else:
+        src_sky = 'public/sky'
         day_faces = {}
         for name in ['px', 'nx', 'py', 'ny', 'pz', 'nz']:
             f_path = os.path.join(src_sky, f'{name}.png')
             if os.path.exists(f_path):
-                img = Image.open(f_path).convert('RGB').resize((512, 512), Image.Resampling.LANCZOS)
+                img = Image.open(f_path).convert('RGB').resize((1024, 1024), Image.Resampling.LANCZOS)
                 day_faces[name] = img
-        
         save_faces(day_faces, f'{SKIES_DIR}/anime/day')
 
-        # Sunset
-        sunset_faces = {}
-        for k, img in day_faces.items():
-            # Warm orange-gold tint
-            r, g, b = img.split()
-            r = r.point(lambda i: min(255, int(i * 1.25)))
-            g = g.point(lambda i: int(i * 0.9))
-            b = b.point(lambda i: int(i * 0.65))
-            sunset_faces[k] = Image.merge('RGB', (r, g, b))
-        save_faces(sunset_faces, f'{SKIES_DIR}/anime/sunset')
+    # Sunset
+    sunset_faces = {}
+    for k, img in day_faces.items():
+        r, g, b = img.split()
+        r = r.point(lambda i: min(255, int(i * 1.25)))
+        g = g.point(lambda i: int(i * 0.9))
+        b = b.point(lambda i: int(i * 0.65))
+        sunset_faces[k] = Image.merge('RGB', (r, g, b))
+    save_faces(sunset_faces, f'{SKIES_DIR}/anime/sunset')
 
-        # Night
-        night_faces = {}
-        for k, img in day_faces.items():
-            r, g, b = img.split()
-            r = r.point(lambda i: int(i * 0.12))
-            g = g.point(lambda i: int(i * 0.18))
-            b = b.point(lambda i: min(255, int(i * 0.42)))
-            night_faces[k] = Image.merge('RGB', (r, g, b))
-        save_faces(night_faces, f'{SKIES_DIR}/anime/night')
+    # Night
+    night_faces = {}
+    for k, img in day_faces.items():
+        r, g, b = img.split()
+        r = r.point(lambda i: int(i * 0.12))
+        g = g.point(lambda i: int(i * 0.18))
+        b = b.point(lambda i: min(255, int(i * 0.42)))
+        night_faces[k] = Image.merge('RGB', (r, g, b))
+    save_faces(night_faces, f'{SKIES_DIR}/anime/night')
 
-        # Rain
-        rain_faces = {}
-        for k, img in day_faces.items():
-            gray = ImageOps.grayscale(img).convert('RGB')
-            dark = ImageEnhance.Brightness(gray).enhance(0.45)
-            rain_faces[k] = dark
-        save_faces(rain_faces, f'{SKIES_DIR}/anime/rain')
+    # Rain
+    rain_faces = {}
+    for k, img in day_faces.items():
+        gray = ImageOps.grayscale(img).convert('RGB')
+        dark = ImageEnhance.Brightness(gray).enhance(0.45)
+        rain_faces[k] = dark
+    save_faces(rain_faces, f'{SKIES_DIR}/anime/rain')
 
 def write_manifest():
     manifest = [
@@ -191,4 +205,4 @@ if __name__ == '__main__':
     process_dramatic()
     process_anime()
     write_manifest()
-    print('All skies processed!')
+    print('All skies re-processed with corrected seamless cubemap face mapping!')

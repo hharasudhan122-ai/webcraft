@@ -86,6 +86,7 @@ function getSkyUrls(packId, target){
 }
 
 function updateSkybox(){
+  updateSkyUIElements();
   if(!scene)return;
   let target=currentTime;
   if(currentWeather==='thunder')target='thunder';
@@ -99,7 +100,7 @@ function updateSkybox(){
       // Fallback if specific weather is missing in pack
       const fallbackUrls=getSkyUrls('anime','day');
       const fb=skyLoader.load(fallbackUrls);
-      scene.background=fb;
+      if(scene)scene.background=fb;
     });
     cube.generateMipmaps=false;
     cube.minFilter=THREE.LinearFilter;
@@ -118,8 +119,6 @@ function updateSkybox(){
 
   // Weather particles
   if(rainSystem)rainSystem.visible=(currentWeather==='rain'||currentWeather==='thunder');
-
-  updateSkyUIElements();
 }
 
 function initRain(){
@@ -168,14 +167,17 @@ function tickTime(dt){
 
 function setSky(skyId){
   currentSky=skyId;localStorage.setItem('wc_sky',skyId);
+  updateSkyUIElements();
   updateSkybox();
 }
 function setTimeOfDay(t){
   currentTime=t;localStorage.setItem('wc_time',t);
+  updateSkyUIElements();
   updateSkybox();
 }
 function setWeather(w){
   currentWeather=w;localStorage.setItem('wc_weather',w);
+  updateSkyUIElements();
   updateSkybox();
 }
 
