@@ -1,4 +1,5 @@
 const express=require('express'),http=require('http'),{WebSocketServer}=require('ws'),fs=require('fs'),path=require('path'),zlib=require('zlib'),cp=require('child_process'),os=require('os');
+const {ProceduralWorld}=require('./terrain');
 const ROOT=path.join(__dirname,'..'),CFG=JSON.parse(fs.readFileSync(path.join(ROOT,'config.json')));
 if(process.env.SUPABASE_URL&&process.env.SUPABASE_ANON_KEY){CFG.supabase={url:process.env.SUPABASE_URL,anonKey:process.env.SUPABASE_ANON_KEY};}
 const PORT=process.env.PORT||CFG.port||3000;
@@ -88,10 +89,13 @@ function loadWorld(id,dir,name){
 }
 if(fs.existsSync(path.join(ROOT,'world','meta.json')))loadWorld('default',path.join(ROOT,'world'),'Your world (default)');
 if(fs.existsSync(path.join(ROOT,'worlds')))for(const d of fs.readdirSync(path.join(ROOT,'worlds')))try{loadWorld(d,path.join(ROOT,'worlds',d),'Uploaded: '+d)}catch(e){}
-worlds.flat={id:'flat',name:'New flat world',kind:'flat',names:['minecraft:air','minecraft:bedrock','minecraft:stone','minecraft:dirt','minecraft:grass_block'],spawn:[8,8],flatCache:new Map()};
+worlds.flat={id:'flat',name:'🏗️ New flat world',kind:'flat',names:['minecraft:air','minecraft:bedrock','minecraft:stone','minecraft:dirt','minecraft:grass_block'],spawn:[8,8],flatCache:new Map()};
+const procWorld=new ProceduralWorld('random','🌲 Random Seed World (Biomes + Trees + Mountains)');
+worlds.random={id:'random',name:procWorld.name,kind:'random',names:procWorld.names,spawn:procWorld.spawn,proc:procWorld};
 const flatAt=y=>y==-64?1:y<=60?2:y<=62?3:y==63?4:0;
 function flatSub(sy){const a=new Uint16Array(4096);for(let x=0;x<16;x++)for(let z=0;z<16;z++)for(let y=0;y<16;y++)a[x*256+z*16+y]=flatAt(sy*16+y);return zlib.deflateSync(Buffer.from(a.buffer));}
 function colBuffer(w,cx,cz){
+  if(w.kind==='random')return w.proc.getColumnBuffer(cx,cz);
   const parts=[];
   if(w.kind==='flat'){for(let sy=-4;sy<4;sy++){if(!w.flatCache.has(sy))w.flatCache.set(sy,flatSub(sy));parts.push([sy,w.flatCache.get(sy)]);}}
   else for(const [sy,off,len] of w.cols.get(cx+','+cz)||[])parts.push([sy,w.bin.subarray(off,off+len)]);
@@ -100,14 +104,20 @@ function colBuffer(w,cx,cz){
   return Buffer.concat(out);
 }
 app.get('/api/worlds',(q,r)=>r.json(Object.values(worlds).map(w=>({id:w.id,name:w.name}))));
+app.get('/api/texture-packs',(q,r)=>{
+  const mf=path.join(ROOT,'public','packs','manifest.json');
+  if(fs.existsSync(mf))return r.json(JSON.parse(fs.readFileSync(mf)));
+  r.json([{id:'alta',name:'🌿 Alta Pack C1 (Default)'}]);
+});
 app.get('/col/:w/:x/:z',(q,r)=>{const w=worlds[q.params.w];if(!w)return r.sendStatus(404);r.set('Content-Type','application/octet-stream').send(colBuffer(w,+q.params.x,+q.params.z));});
 app.post('/api/upload',express.raw({type:'*/*',limit:'600mb'}),(q,r)=>{
   const id='w'+Date.now().toString(36),tmp=path.join(ROOT,'tmp_'+id+'.mcworld'),out=path.join(ROOT,'worlds',id);
   fs.mkdirSync(out,{recursive:true});fs.writeFileSync(tmp,q.body);
-  cp.execFile('python3',[path.join(ROOT,'convert.py'),tmp,out],{timeout:600000},(e,so,se)=>{
+  const py=process.platform==='win32'?'python':'python3';
+  cp.execFile(py,[path.join(ROOT,'convert.py'),tmp,out],{timeout:600000},(e,so,se)=>{
     fs.rmSync(tmp,{force:true});
-    if(e){fs.rmSync(out,{recursive:true,force:true});return r.status(500).json({error:'Conversion failed. Needs python3 and "pip install amulet-leveldb". '+String(se||e.message).slice(-200)});}
-    loadWorld(id,out,'Uploaded: '+(q.query.name||id));r.json({id});});
+    if(e){fs.rmSync(out,{recursive:true,force:true});return r.status(500).json({error:'Conversion failed. Needs python3 and pip install amulet-leveldb on the server. '+String(se||e.message).slice(-300)});}
+    loadWorld(id,out,(q.query.name||id));r.json({id,name:(q.query.name||id)});});
 });
 // ---------- world access ----------
 function subOf(w,cx,sy,cz){
@@ -117,7 +127,9 @@ function subOf(w,cx,sy,cz){
   if(w.cache.size>600)w.cache.delete(w.cache.keys().next().value);w.cache.set(k,a);return a;
 }
 function baseAt(w,x,y,z){
-  if(y<-64||y>319)return 0;if(w.kind==='flat')return flatAt(y);
+  if(y<-64||y>319)return 0;
+  if(w.kind==='flat')return flatAt(y);
+  if(w.kind==='random'){const e=w.proc;return e.blockAt(x,y,z);}
   const a=subOf(w,x>>4,y>>4,z>>4);return a?a[(x&15)*256+(z&15)*16+(y&15)]:0;
 }
 const blockAt=(R,x,y,z)=>{const e=R.edits.get(x+','+y+','+z);return e!==undefined?e:baseAt(R.w,x,y,z);};

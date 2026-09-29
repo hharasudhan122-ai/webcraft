@@ -76,6 +76,14 @@ button:hover{filter:brightness(1.14);border-color:var(--line2)}
 /* up row */
 .uprow{margin-top:8px;font-size:13px;color:var(--dim);display:flex;align-items:center;gap:8px}
 .uprow button{padding:5px 10px}
+.uprow label.btn-small:hover{border-color:var(--moss)!important;color:var(--moss)!important}
+
+/* 2-column grid for host pane */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+@media(max-width:600px){.grid2{grid-template-columns:1fr}}
+
+/* Texture pack card subheading */
+#pack-card h2 span{font-size:11px;color:var(--dim);font-weight:400;margin-left:6px}
 
 /* public toggle */
 .pub-toggle{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px;color:var(--dim)}
@@ -229,20 +237,40 @@ body.touch-enabled #touch-controls{display:block}
 
   <!-- HOST PANE -->
   <div class="pane active" id="pane-host">
-    <div class="card">
-      <h2>Host a Room</h2>
-      <label class="lbl" for="world">World</label>
-      <select id="world"></select>
-      <div class="uprow">
-        <button id="upbtn" type="button" class="btn-small">📂 Upload .mcworld</button>
-        <span id="upst">Bedrock worlds only</span>
-        <input id="upfile" type="file" accept=".mcworld,.zip" hidden>
+    <div class="grid2">
+      <!-- World & Upload card -->
+      <div class="card">
+        <h2>Host a Room</h2>
+        <label class="lbl" for="world">🌍 Choose World</label>
+        <select id="world"></select>
+
+        <div class="uprow" style="margin-top:10px;flex-wrap:wrap;gap:6px">
+          <label id="upbtn-lbl" class="btn-small" for="upfile" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;padding:6px 12px;border:1px solid var(--line);border-radius:5px;background:var(--panel2);color:var(--txt);font:600 13px/1 'Barlow Semi Condensed',sans-serif">
+            📂 Upload .mcworld
+          </label>
+          <input id="upfile" type="file" accept=".mcworld,.zip" style="display:none">
+          <span id="upst" style="font-size:12px;color:var(--dim)">Bedrock worlds only · Works on mobile too</span>
+        </div>
+        <div id="upbar" style="display:none;margin-top:8px;background:var(--panel2);border-radius:4px;height:8px;overflow:hidden">
+          <div id="upbar-fill" style="height:100%;background:linear-gradient(90deg,var(--moss),#3df0a0);width:0%;transition:width .2s"></div>
+        </div>
+        <div id="uperr" style="color:var(--warn);font-size:12px;margin-top:4px"></div>
+
+        <div class="pub-toggle" style="margin-top:12px">
+          <input type="checkbox" id="publish">
+          <label for="publish">Publish to public rooms list</label>
+        </div>
+        <button class="btn-green" id="create">Create Room →</button>
       </div>
-      <div class="pub-toggle">
-        <input type="checkbox" id="publish">
-        <label for="publish">Publish to public rooms list (internet players can discover)</label>
+
+      <!-- Texture Pack card -->
+      <div class="card" id="pack-card">
+        <h2>🎨 Texture Pack <span>Choose your look</span></h2>
+        <div id="pack-list" style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
+          <div class="no-rooms" style="font-size:13px">Loading packs…</div>
+        </div>
+        <p style="color:var(--dim);font-size:11px;margin-top:10px;line-height:1.5">Texture pack is per-browser. Other players keep their own pack choice.</p>
       </div>
-      <button class="btn-green" id="create">Create Room →</button>
     </div>
   </div>
 

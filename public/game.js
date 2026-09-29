@@ -2,13 +2,72 @@ const $=s=>document.querySelector(s);
 const S={names:[],creative:false,host:false,inv:Array(36).fill(null),cursor:null,craft:Array(9).fill(null),out:null,chest:null,players:new Map(),world:'',code:'',me:0,allCreative:false,started:false};
 let ws,ui=null;
 
-// ---------- Atlas & Textures metadata ----------
-let atlasMeta=null,REV_TEX={};
-fetch('/atlas_meta.json').then(r=>r.json()).then(data=>{
-  atlasMeta=data;
-  if(data.textures)for(const [k,v] of Object.entries(data.textures))REV_TEX[v]=k;
-  if(S.started)rebuildDerived();
-}).catch(e=>console.error('Failed to load atlas_meta',e));
+// ---------- Texture Pack System ----------
+let atlasMeta=null,REV_TEX={},currentPack=localStorage.getItem('wc_pack')||'alta';
+
+async function loadPack(packId){
+  const atlasPath=`/packs/${packId}/atlas.png`;
+  const metaPath=`/packs/${packId}/atlas_meta.json`;
+  try{
+    const data=await(await fetch(metaPath)).json();
+    atlasMeta=data;REV_TEX={};
+    if(data.textures)for(const [k,v] of Object.entries(data.textures))REV_TEX[v]=k;
+    currentPack=packId;localStorage.setItem('wc_pack',packId);
+    if(atlasTex){
+      const img=new Image();
+      img.onload=()=>{
+        atlasTex.image=img;
+        atlasTex.needsUpdate=true;
+        if(S.started)rebuildDerived();
+      };
+      img.src=atlasPath;
+    }else{
+      if(S.started)rebuildDerived();
+    }
+    // Update UI highlight
+    document.querySelectorAll('.pack-btn').forEach(b=>b.classList.toggle('active',b.dataset.pack===packId));
+    console.log('Loaded pack:',packId);
+  }catch(e){
+    // Fallback to default atlas
+    console.warn('Pack not found, using default atlas');
+    try{
+      const data=await(await fetch('/atlas_meta.json')).json();
+      atlasMeta=data;REV_TEX={};
+      if(data.textures)for(const [k,v] of Object.entries(data.textures))REV_TEX[v]=k;
+      if(S.started)rebuildDerived();
+    }catch(e2){console.error(e2);}
+  }
+}
+
+async function loadTexturePacks(){
+  try{
+    const packs=await(await fetch('/api/texture-packs')).json();
+    const list=document.getElementById('pack-list');
+    if(!list)return;
+    list.innerHTML='';
+    packs.forEach(p=>{
+      const btn=document.createElement('button');
+      btn.className='touch-btn pack-btn';
+      btn.dataset.pack=p.id;
+      btn.style.cssText='width:100%;padding:10px 14px;font-size:13px;text-align:left;border-radius:8px;justify-content:flex-start';
+      btn.textContent=p.name;
+      if(p.id===currentPack)btn.classList.add('active');
+      btn.onclick=()=>loadPack(p.id);
+      list.appendChild(btn);
+    });
+    // pack-btn active style
+    if(!document.getElementById('pack-style')){
+      const s=document.createElement('style');
+      s.id='pack-style';
+      s.textContent='.pack-btn.active{background:rgba(126,200,80,0.35)!important;border-color:#7ec850!important;color:#7ec850!important;}';
+      document.head.appendChild(s);
+    }
+  }catch(e){console.warn('Could not load packs list',e);}
+}
+
+// Load initial pack and atlas
+loadPack(currentPack);
+loadTexturePacks();
 
 // ---------- Lobby ----------
 $('#name').value=localStorage.getItem('wc_name')||'';
@@ -22,15 +81,57 @@ async function loadWorlds(sel){
   }catch(e){console.error(e);}
 }
 loadWorlds();
-$('#upbtn').onclick=()=>$('#upfile').click();
+
+// Upload .mcworld – works on all devices including mobile
 $('#upfile').onchange=async e=>{
-  const f=e.target.files[0];if(!f)return;$('#upst').textContent='Converting… this can take a minute';
+  const f=e.target.files[0];if(!f)return;
+  const bar=document.getElementById('upbar');
+  const barFill=document.getElementById('upbar-fill');
+  const st=document.getElementById('upst');
+  const errEl=document.getElementById('uperr');
+  st.textContent='Uploading…';if(bar)bar.style.display='block';if(errEl)errEl.textContent='';
   try{
-    const r=await fetch('/api/upload?name='+encodeURIComponent(f.name),{method:'POST',body:f});
-    const j=await r.json();if(!r.ok)throw new Error(j.error);
-    await loadWorlds(j.id);$('#upst').textContent='Loaded '+f.name;
-  }catch(x){$('#upst').textContent='';$('#err').textContent=x.message;}
+    // Use XHR for upload progress on mobile
+    const result=await new Promise((resolve,reject)=>{
+      const xhr=new XMLHttpRequest();
+      xhr.open('POST','/api/upload?name='+encodeURIComponent(f.name));
+      xhr.upload.onprogress=ev=>{
+        if(ev.lengthComputable&&barFill){
+          barFill.style.width=Math.round(ev.loaded/ev.total*60)+'%';
+        }
+      };
+      xhr.onload=()=>{
+        if(barFill)barFill.style.width='80%';
+        try{resolve(JSON.parse(xhr.responseText));}catch(e){reject(new Error('Bad server response'));}
+      };
+      xhr.onerror=()=>reject(new Error('Network error during upload'));
+      xhr.send(f);
+    });
+    if(result.error)throw new Error(result.error);
+    if(barFill)barFill.style.width='100%';
+    st.textContent='✅ Converting… up to 60 seconds';
+    // Poll for world to appear
+    let tries=0;
+    const poll=setInterval(async()=>{
+      tries++;
+      try{
+        const wl=await(await fetch('/api/worlds')).json();
+        if(wl.find(w=>w.id===result.id)){
+          clearInterval(poll);
+          await loadWorlds(result.id);
+          st.textContent='✅ Loaded: '+(result.name||f.name);
+          if(bar)bar.style.display='none';
+        }
+      }catch(e){}
+      if(tries>30){clearInterval(poll);st.textContent='Conversion timed out';}
+    },2000);
+  }catch(x){
+    st.textContent='';
+    if(errEl)errEl.textContent='Upload failed: '+x.message;
+    if(bar)bar.style.display='none';
+  }
 };
+
 
 // ---- connect helpers ----
 function connect(first, wsUrl){
@@ -179,10 +280,13 @@ function initThree(){
   scene.background=skyCube;
   scene.fog=new THREE.Fog(0xa8c8e8,80,R*16+100);
 
-  // Block Texture Atlas
-  atlasTex=new THREE.TextureLoader().load('/atlas.png',()=>{
-    for(const k of chunks.keys())meshQ.add(k);
-  });
+  // Block Texture Atlas – loaded from selected pack or fallback /atlas.png
+  const _atlasUrl=`/packs/${currentPack}/atlas.png`;
+  atlasTex=new THREE.TextureLoader().load(_atlasUrl,
+    ()=>{for(const k of chunks.keys())meshQ.add(k);},
+    undefined,
+    ()=>{const img=new Image();img.onload=()=>{atlasTex.image=img;atlasTex.needsUpdate=true;for(const k of chunks.keys())meshQ.add(k);};img.src='/atlas.png';}
+  );
   atlasTex.magFilter=THREE.NearestFilter;
   atlasTex.minFilter=THREE.NearestFilter;
 
