@@ -78,12 +78,22 @@ button:hover{filter:brightness(1.14);border-color:var(--line2)}
 .uprow button{padding:5px 10px}
 .uprow label.btn-small:hover{border-color:var(--moss)!important;color:var(--moss)!important}
 
-/* 2-column grid for host pane */
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
-@media(max-width:600px){.grid2{grid-template-columns:1fr}}
+/* Responsive grid for host pane (World, Texture Pack, Ambience & Clouds) */
+.grid-host{display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:16px;align-items:start}
 
-/* Texture pack card subheading */
-#pack-card h2 span{font-size:11px;color:var(--dim);font-weight:400;margin-left:6px}
+/* Pack & Sky card subheadings */
+#pack-card h2 span, #sky-card h2 span{font-size:11px;color:var(--dim);font-weight:400;margin-left:6px}
+
+/* Sky and pack buttons */
+.pack-btn, .sky-btn{width:100%;padding:10px 14px;font-size:13px;text-align:left;border-radius:8px;justify-content:flex-start;cursor:pointer;transition:all .15s}
+.pack-btn.active{background:rgba(126,200,80,0.3)!important;border-color:var(--moss)!important;color:var(--moss)!important;font-weight:600}
+.sky-btn.active{background:rgba(60,160,250,0.25)!important;border-color:#50b4fa!important;color:#50b4fa!important;font-weight:600}
+
+/* Time & weather buttons */
+.time-btn, .weather-btn{flex:1;padding:7px 6px;font-size:12px;border-radius:6px;border:1px solid var(--line);background:var(--panel2);color:var(--txt);cursor:pointer;text-align:center;transition:all .15s}
+.time-btn:hover, .weather-btn:hover{border-color:var(--dim)}
+.time-btn.active{background:var(--gold);color:#101418;font-weight:700;border-color:var(--gold)}
+.weather-btn.active{background:#3a8fff;color:#fff;font-weight:700;border-color:#3a8fff}
 
 /* public toggle */
 .pub-toggle{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px;color:var(--dim)}
@@ -237,7 +247,7 @@ body.touch-enabled #touch-controls{display:block}
 
   <!-- HOST PANE -->
   <div class="pane active" id="pane-host">
-    <div class="grid2">
+    <div class="grid-host">
       <!-- World & Upload card -->
       <div class="card">
         <h2>Host a Room</h2>
@@ -269,7 +279,33 @@ body.touch-enabled #touch-controls{display:block}
         <div id="pack-list" style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
           <div class="no-rooms" style="font-size:13px">Loading packs…</div>
         </div>
-        <p style="color:var(--dim);font-size:11px;margin-top:10px;line-height:1.5">Texture pack is per-browser. Other players keep their own pack choice.</p>
+        <p style="color:var(--dim);font-size:11px;margin-top:10px;line-height:1.5">Textures are per-browser. Other players keep their own pack choice.</p>
+      </div>
+
+      <!-- Ambience & Clouds card -->
+      <div class="card" id="sky-card">
+        <h2>🌤️ Ambience &amp; Clouds <span>Sky, Day/Night &amp; Rain</span></h2>
+        <div id="sky-list" style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
+          <div class="no-rooms" style="font-size:13px">Loading atmospheres…</div>
+        </div>
+        
+        <div style="margin-top:12px;font-size:12px;color:var(--dim)">Time of Day:</div>
+        <div style="display:flex;gap:6px;margin-top:4px">
+          <button type="button" class="time-btn active" data-time="day">☀️ Day</button>
+          <button type="button" class="time-btn" data-time="sunset">🌇 Sunset</button>
+          <button type="button" class="time-btn" data-time="night">🌙 Night</button>
+        </div>
+
+        <div style="margin-top:10px;font-size:12px;color:var(--dim)">Weather / Atmosphere:</div>
+        <div style="display:flex;gap:6px;margin-top:4px">
+          <button type="button" class="weather-btn active" data-weather="clear">☀️ Clear</button>
+          <button type="button" class="weather-btn" data-weather="rain">🌧️ Rain</button>
+          <button type="button" class="weather-btn" data-weather="thunder">⛈️ Thunder</button>
+        </div>
+
+        <label style="display:flex;gap:8px;align-items:center;margin-top:12px;font-size:12px;color:var(--dim)">
+          <input type="checkbox" id="chk-auto-time-lobby" checked style="width:auto"> ⏱️ Dynamic Day/Night Cycle (Day → Sunset → Night)
+        </label>
       </div>
     </div>
   </div>
@@ -347,8 +383,8 @@ body.touch-enabled #touch-controls{display:block}
 <canvas id="c"></canvas>
 <div id="hud">
   <div id="cross"></div><div id="brk"><i></i></div>
-  <div id="help">WASD move · Space jump · Shift sprint · E inventory · Q drop · T chat · R respawn · Tab host panel · double-tap Space fly (creative)</div>
-  <div id="top"><div id="mode"></div>Room <b id="rc" title="Click to copy"></b><div id="pcount"></div></div>
+  <div id="help">WASD move · Space jump · Shift sprint · E inventory · K sky &amp; weather · Q drop · T chat · R respawn · Tab host panel · double-tap Space fly (creative)</div>
+  <div id="top"><div id="mode"></div>Room <b id="rc" title="Click to copy"></b><div id="pcount"></div><button id="btn-top-sky" type="button" class="btn-small" onclick="openUI('sky')" style="padding:2px 8px;font-size:11px;margin-left:6px;cursor:pointer">🌤️ Sky</button></div>
   <div id="chatlog"></div>
   <div id="chatbox" style="position:fixed;left:12px;bottom:60px;width:min(440px,90vw);display:none;z-index:90">
     <div style="display:flex;gap:6px">
@@ -382,6 +418,7 @@ body.touch-enabled #touch-controls{display:block}
     <!-- Top Touch Bar -->
     <div id="touch-top-bar">
       <button type="button" class="touch-btn sm-touch-btn" id="btn-inv">🎒 INV</button>
+      <button type="button" class="touch-btn sm-touch-btn" id="btn-sky-ui">🌤️ SKY</button>
       <button type="button" class="touch-btn sm-touch-btn" id="btn-drop">⏏️ DROP</button>
       <button type="button" class="touch-btn sm-touch-btn" id="btn-chat">💬 CHAT</button>
       <button type="button" class="touch-btn sm-touch-btn" id="btn-fly" style="display:none">🕊️ FLY</button>
@@ -407,6 +444,33 @@ body.touch-enabled #touch-controls{display:block}
     </div>
     <div id="pls"></div>
     <label style="display:flex;gap:8px;align-items:center;margin-top:10px"><input type="checkbox" id="allc" style="width:auto"> Everyone is in creative mode</label>
+  </div>
+
+  <div class="panel" id="skyp">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <b style="font-size:16px">🌤️ Ambience &amp; Weather</b>
+      <button type="button" class="btn-small" onclick="closeUI()" style="padding:4px 10px">✕ Close</button>
+    </div>
+    <div style="margin-bottom:6px;font-size:13px;color:var(--dim)">Atmosphere Pack:</div>
+    <div id="ingame-sky-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px"></div>
+    
+    <div style="margin-bottom:6px;font-size:13px;color:var(--dim)">Time of Day:</div>
+    <div style="display:flex;gap:6px;margin-bottom:14px">
+      <button type="button" class="time-btn" data-time="day">☀️ Day</button>
+      <button type="button" class="time-btn" data-time="sunset">🌇 Sunset</button>
+      <button type="button" class="time-btn" data-time="night">🌙 Night</button>
+    </div>
+
+    <div style="margin-bottom:6px;font-size:13px;color:var(--dim)">Weather:</div>
+    <div style="display:flex;gap:6px;margin-bottom:14px">
+      <button type="button" class="weather-btn" data-weather="clear">☀️ Clear</button>
+      <button type="button" class="weather-btn" data-weather="rain">🌧️ Rain</button>
+      <button type="button" class="weather-btn" data-weather="thunder">⛈️ Thunder</button>
+    </div>
+
+    <label style="display:flex;gap:8px;align-items:center;margin-top:6px;font-size:13px;color:var(--dim)">
+      <input type="checkbox" id="chk-auto-time-ingame" checked style="width:auto"> ⏱️ Auto Day/Night Cycle
+    </label>
   </div>
 </div>
 <div id="cursor"></div>

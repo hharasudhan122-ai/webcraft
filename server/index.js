@@ -109,7 +109,24 @@ app.get('/api/texture-packs',(q,r)=>{
   if(fs.existsSync(mf))return r.json(JSON.parse(fs.readFileSync(mf)));
   r.json([{id:'alta',name:'🌿 Alta Pack C1 (Default)'}]);
 });
-app.get('/col/:w/:x/:z',(q,r)=>{const w=worlds[q.params.w];if(!w)return r.sendStatus(404);r.set('Content-Type','application/octet-stream').send(colBuffer(w,+q.params.x,+q.params.z));});
+app.get('/api/skies',(q,r)=>{
+  const mf=path.join(ROOT,'public','skies','manifest.json');
+  if(fs.existsSync(mf))return r.json(JSON.parse(fs.readFileSync(mf)));
+  r.json([{id:'anime',name:'☁️ Anime Clouds (Default)'}]);
+});
+app.get('/col/:w/:x/:z',(q,r)=>{
+  const w=worlds[q.params.w];if(!w)return r.sendStatus(404);
+  const cx=+q.params.x,cz=+q.params.z;
+  r.set('Content-Type','application/octet-stream');
+  r.set('Cache-Control','public, max-age=600');
+  if(!w.colBufCache)w.colBufCache=new Map();
+  const k=cx+','+cz;
+  if(w.colBufCache.has(k))return r.send(w.colBufCache.get(k));
+  const buf=colBuffer(w,cx,cz);
+  if(w.colBufCache.size>1500)w.colBufCache.delete(w.colBufCache.keys().next().value);
+  w.colBufCache.set(k,buf);
+  r.send(buf);
+});
 app.post('/api/upload',express.raw({type:'*/*',limit:'600mb'}),(q,r)=>{
   const id='w'+Date.now().toString(36),tmp=path.join(ROOT,'tmp_'+id+'.mcworld'),out=path.join(ROOT,'worlds',id);
   fs.mkdirSync(out,{recursive:true});fs.writeFileSync(tmp,q.body);

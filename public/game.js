@@ -69,6 +69,179 @@ async function loadTexturePacks(){
 loadPack(currentPack);
 loadTexturePacks();
 
+// ---------- Ambience & Clouds System (Day/Night & Weather) ----------
+let currentSky=localStorage.getItem('wc_sky')||'anime';
+let currentTime=localStorage.getItem('wc_time')||'day';
+let currentWeather=localStorage.getItem('wc_weather')||'clear';
+let autoDayNight=localStorage.getItem('wc_auto_time')!=='false';
+let availableSkies=[];
+const skyLoader=new THREE.CubeTextureLoader();
+const skyCache=new Map();
+let rainSystem=null;
+const RAIN_COUNT=900;
+
+function getSkyUrls(packId, target){
+  const b=`/skies/${packId}/${target}`;
+  return [`${b}/px.jpg`,`${b}/nx.jpg`,`${b}/py.jpg`,`${b}/ny.jpg`,`${b}/pz.jpg`,`${b}/nz.jpg`];
+}
+
+function updateSkybox(){
+  if(!scene)return;
+  let target=currentTime;
+  if(currentWeather==='thunder')target='thunder';
+  else if(currentWeather==='rain')target='rain';
+
+  const key=`${currentSky}_${target}`;
+  let cube=skyCache.get(key);
+  if(!cube){
+    const urls=getSkyUrls(currentSky,target);
+    cube=skyLoader.load(urls,undefined,undefined,()=>{
+      // Fallback if specific weather is missing in pack
+      const fallbackUrls=getSkyUrls('anime','day');
+      const fb=skyLoader.load(fallbackUrls);
+      scene.background=fb;
+    });
+    cube.generateMipmaps=false;
+    cube.minFilter=THREE.LinearFilter;
+    cube.magFilter=THREE.LinearFilter;
+    skyCache.set(key,cube);
+  }
+  scene.background=cube;
+
+  // Fog & ambient tint
+  let fogCol=0xa8c8e8;
+  if(target==='sunset')fogCol=0xd87038;
+  else if(target==='night')fogCol=0x0a1020;
+  else if(target==='rain')fogCol=0x404854;
+  else if(target==='thunder')fogCol=0x20242e;
+  if(scene.fog)scene.fog.color.setHex(fogCol);
+
+  // Weather particles
+  if(rainSystem)rainSystem.visible=(currentWeather==='rain'||currentWeather==='thunder');
+
+  updateSkyUIElements();
+}
+
+function initRain(){
+  const geom=new THREE.BufferGeometry();
+  const pos=new Float32Array(RAIN_COUNT*3);
+  for(let i=0;i<RAIN_COUNT;i++){
+    pos[i*3]=(Math.random()-0.5)*44;
+    pos[i*3+1]=Math.random()*26;
+    pos[i*3+2]=(Math.random()-0.5)*44;
+  }
+  geom.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  const mat=new THREE.PointsMaterial({color:0xa0c8ff,size:0.18,transparent:true,opacity:0.68});
+  rainSystem=new THREE.Points(geom,mat);
+  rainSystem.visible=(currentWeather==='rain'||currentWeather==='thunder');
+  scene.add(rainSystem);
+}
+
+function updateRain(dt){
+  if(!rainSystem||!rainSystem.visible)return;
+  rainSystem.position.set(P.x,P.y,P.z);
+  const pos=rainSystem.geometry.attributes.position.array;
+  for(let i=0;i<RAIN_COUNT;i++){
+    pos[i*3+1]-=36*dt;
+    if(pos[i*3+1]<-6){
+      pos[i*3+1]=24;
+      pos[i*3]=(Math.random()-0.5)*44;
+      pos[i*3+2]=(Math.random()-0.5)*44;
+    }
+  }
+  rainSystem.geometry.attributes.position.needsUpdate=true;
+}
+
+let worldTicks=6000;
+function tickTime(dt){
+  if(!autoDayNight||currentWeather!=='clear')return;
+  worldTicks=(worldTicks+dt*18)%24000;
+  let newTime='day';
+  if(worldTicks>=11500&&worldTicks<13500)newTime='sunset';
+  else if(worldTicks>=13500&&worldTicks<22500)newTime='night';
+  else if(worldTicks>=22500&&worldTicks<24000)newTime='sunset';
+  if(newTime!==currentTime){
+    currentTime=newTime;
+    updateSkybox();
+  }
+}
+
+function setSky(skyId){
+  currentSky=skyId;localStorage.setItem('wc_sky',skyId);
+  updateSkybox();
+}
+function setTimeOfDay(t){
+  currentTime=t;localStorage.setItem('wc_time',t);
+  updateSkybox();
+}
+function setWeather(w){
+  currentWeather=w;localStorage.setItem('wc_weather',w);
+  updateSkybox();
+}
+
+function updateSkyUIElements(){
+  document.querySelectorAll('.sky-btn').forEach(b=>b.classList.toggle('active',b.dataset.sky===currentSky));
+  document.querySelectorAll('.time-btn').forEach(b=>b.classList.toggle('active',b.dataset.time===currentTime));
+  document.querySelectorAll('.weather-btn').forEach(b=>b.classList.toggle('active',b.dataset.weather===currentWeather));
+  const autoCb=document.getElementById('chk-auto-time-lobby');
+  if(autoCb)autoCb.checked=autoDayNight;
+  const autoCbIn=document.getElementById('chk-auto-time-ingame');
+  if(autoCbIn)autoCbIn.checked=autoDayNight;
+}
+
+async function loadSkiesList(){
+  try{
+    const res=await fetch('/api/skies');
+    availableSkies=await res.json();
+  }catch(e){
+    availableSkies=[
+      {id:'anime',name:'☁️ Anime Clouds (Default)',desc:'Stylized vibrant anime cloudscapes'},
+      {id:'realistic',name:'🌅 Realistic Atmosphere',desc:'Ultra realistic sky, sunset & rain'},
+      {id:'dramatic',name:'⚡ Dramatic Skies',desc:'Photorealistic 3D celestial skybox'}
+    ];
+  }
+  populateSkyLists();
+}
+
+function populateSkyLists(){
+  ['sky-list','ingame-sky-list'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(!el)return;
+    el.innerHTML='';
+    availableSkies.forEach(s=>{
+      const btn=document.createElement('button');
+      btn.className='touch-btn sky-btn';
+      btn.dataset.sky=s.id;
+      btn.style.cssText='width:100%;padding:10px 14px;font-size:13px;text-align:left;border-radius:8px;justify-content:flex-start';
+      btn.innerHTML=`<div><strong>${s.name}</strong><div style="font-size:11px;color:var(--dim);margin-top:2px">${s.desc||''}</div></div>`;
+      if(s.id===currentSky)btn.classList.add('active');
+      btn.onclick=()=>setSky(s.id);
+      el.appendChild(btn);
+    });
+  });
+  updateSkyUIElements();
+}
+
+// Bind lobby & in-game sky toggles
+document.addEventListener('click',e=>{
+  const tb=e.target.closest('.time-btn');
+  if(tb&&tb.dataset.time)setTimeOfDay(tb.dataset.time);
+  const wb=e.target.closest('.weather-btn');
+  if(wb&&wb.dataset.weather)setWeather(wb.dataset.weather);
+});
+
+const onAutoChange=e=>{
+  autoDayNight=e.target.checked;
+  localStorage.setItem('wc_auto_time',autoDayNight);
+  const a1=document.getElementById('chk-auto-time-lobby');if(a1)a1.checked=autoDayNight;
+  const a2=document.getElementById('chk-auto-time-ingame');if(a2)a2.checked=autoDayNight;
+};
+document.addEventListener('change',e=>{
+  if(e.target.id==='chk-auto-time-lobby'||e.target.id==='chk-auto-time-ingame')onAutoChange(e);
+});
+
+loadSkiesList();
+
 // ---------- Lobby ----------
 $('#name').value=localStorage.getItem('wc_name')||'';
 async function loadWorlds(sel){
@@ -262,23 +435,10 @@ function initThree(){
   camera.rotation.order='YXZ';
   scene.add(camera);
 
-  // Load Anime Clouds Skybox (PNG format, seamless continuous cubemap, watermark cleaned)
-  // Three.js CubeTextureLoader order: [+X, -X, +Y, -Y, +Z, -Z]
-  // Verified mapping: px=tile5, nx=tile3, py=tile1, ny=tile0(cleaned), pz=tile4, nz=tile2
-  const skyLoader=new THREE.CubeTextureLoader();
-  const skyCube=skyLoader.load([
-    '/sky/px.png', // +X east  = tile 5
-    '/sky/nx.png', // -X west  = tile 3
-    '/sky/py.png', // +Y top   = tile 1
-    '/sky/ny.png', // -Y bot   = tile 0 (watermark removed)
-    '/sky/pz.png', // +Z south = tile 4
-    '/sky/nz.png'  // -Z north = tile 2
-  ]);
-  skyCube.generateMipmaps=false;
-  skyCube.minFilter=THREE.LinearFilter;
-  skyCube.magFilter=THREE.LinearFilter;
-  scene.background=skyCube;
+  // Sky & Atmosphere + Rain setup
   scene.fog=new THREE.Fog(0xa8c8e8,80,R*16+100);
+  initRain();
+  updateSkybox();
 
   // Block Texture Atlas – loaded from selected pack or fallback /atlas.png
   const _atlasUrl=`/packs/${currentPack}/atlas.png`;
@@ -859,7 +1019,7 @@ async function loadCol(cx,cz){
 
 function streamWorld(px,pz){
   const pcx=Math.floor(px/16),pcz=Math.floor(pz/16);
-  if(pendingCols.size<6){
+  if(pendingCols.size<14){
     const want=[];
     for(let dx=-R;dx<=R;dx++)for(let dz=-R;dz<=R;dz++){
       const d=dx*dx+dz*dz;
@@ -869,12 +1029,12 @@ function streamWorld(px,pz){
       }
     }
     want.sort((a,b)=>a[0]-b[0]);
-    for(const w of want.slice(0,6-pendingCols.size))loadCol(w[1],w[2]);
+    for(const w of want.slice(0,14-pendingCols.size))loadCol(w[1],w[2]);
   }
   const t0=performance.now();
   for(const k of meshQ){
     meshQ.delete(k);meshChunk(k);
-    if(performance.now()-t0>7)break;
+    if(performance.now()-t0>14)break;
   }
 }
 
@@ -907,7 +1067,7 @@ const K={};let lastSpace=0,slot=0;
 
 const solidAt=(x,y,z)=>{
   const b=getB(Math.floor(x),Math.floor(y),Math.floor(z));
-  if(b<0)return true;
+  if(b<0)return y<=-60;
   if(!b||SKIP[b]||WATER[b])return false;
   if(IS_DOOR[b])return !isDoorOpen(getDoorBaseKey(Math.floor(x),Math.floor(y),Math.floor(z)));
   return SOLID[b];
@@ -922,7 +1082,7 @@ function hits(px,py,pz){
     for(let y=Math.floor(pMinY);y<=Math.floor(pMaxY);y++)
       for(let z=Math.floor(pMinZ);z<=Math.floor(pMaxZ);z++){
         const b=getB(x,y,z);
-        if(b<0)return true;
+        if(b<0){if(y<=-60)return true;continue;}
         if(!b||SKIP[b]||WATER[b])continue;
 
         if(IS_DOOR[b]){
@@ -1290,9 +1450,11 @@ function openUI(name){
   ui=name;try{document.exitPointerLock();}catch(e){}
   $('#invp').style.display=(name==='inv'||name==='chest')?'block':'none';
   $('#hostp').style.display=name==='host'?'block':'none';
+  if($('#skyp'))$('#skyp').style.display=name==='sky'?'block':'none';
   if($('#chatbox'))$('#chatbox').style.display=name==='chat'?'block':'none';
   if(name==='chat')$('#chatin').focus();
   if(name==='inv')renderPalette();
+  if(name==='sky')populateSkyLists();
 }
 function closeUI(){
   if(ui==='inv'||ui==='chest'){send({t:'closeInv'});if(S.chest)send({t:'closeChest'});}
@@ -1300,6 +1462,7 @@ function closeUI(){
 }
 function openUIHide(){
   $('#invp').style.display=$('#hostp').style.display='none';
+  if($('#skyp'))$('#skyp').style.display='none';
   if($('#chatbox'))$('#chatbox').style.display='none';
   $('#chatin').blur();
   if(!document.body.classList.contains('touch-enabled')){
@@ -1308,9 +1471,22 @@ function openUIHide(){
 }
 function submitChat(){
   const t=$('#chatin').value.trim();
-  if(t)send({t:'chat',text:t});
+  if(t){
+    // Chat commands for time, weather and sky
+    if(t==='/time day'||t==='/day'){setTimeOfDay('day');chatLine('System','Time set to Day');}
+    else if(t==='/time sunset'||t==='/sunset'){setTimeOfDay('sunset');chatLine('System','Time set to Sunset');}
+    else if(t==='/time night'||t==='/night'){setTimeOfDay('night');chatLine('System','Time set to Night');}
+    else if(t==='/weather clear'||t==='/clear'){setWeather('clear');chatLine('System','Weather set to Clear');}
+    else if(t==='/weather rain'||t==='/rain'){setWeather('rain');chatLine('System','Weather set to Rain');}
+    else if(t==='/weather thunder'||t==='/thunder'){setWeather('thunder');chatLine('System','Weather set to Thunderstorm');}
+    else if(t==='/sky anime'){setSky('anime');chatLine('System','Atmosphere changed to Anime Clouds');}
+    else if(t==='/sky realistic'){setSky('realistic');chatLine('System','Atmosphere changed to Realistic Atmosphere');}
+    else if(t==='/sky dramatic'){setSky('dramatic');chatLine('System','Atmosphere changed to Dramatic Skies');}
+    else send({t:'chat',text:t});
+  }
   $('#chatin').value='';closeUI();
 }
+if($('#btn-sky-ui'))$('#btn-sky-ui').onclick=()=>openUI('sky');
 if($('#chatsend'))$('#chatsend').onclick=submitChat;
 if($('#chatclose'))$('#chatclose').onclick=closeUI;
 
@@ -1330,11 +1506,12 @@ addEventListener('keydown',e=>{
   }
   if(e.code==='Escape'){if(ui)closeUI();return;}
   if(e.code==='KeyE'){if(ui==='inv'||ui==='chest')closeUI();else if(!ui)openUI('inv');e.preventDefault();return;}
+  if(e.code==='KeyK'){if(ui==='sky')closeUI();else if(!ui)openUI('sky');e.preventDefault();return;}
   if(e.code==='Tab'){e.preventDefault();if(S.host){ui==='host'?closeUI():(!ui&&openUI('host'),renderHost());}return;}
   if(ui)return;
 
   if(e.code==='KeyQ'){send({t:'dropHeld',slot});return;} // Drop held item
-  if(e.code==='KeyT'){e.preventDefault();openUI('chat');return;}
+  if(e.code==='KeyT'||e.code==='Slash'){e.preventDefault();openUI('chat');if(e.code==='Slash')$('#chatin').value='/';return;}
   if(e.code==='KeyR')send({t:'respawn'});
   if(e.code==='Space'&&!K.Space){
     const now=performance.now();
@@ -1647,6 +1824,8 @@ function loop(now){
 
   animateHeldHand(dt,now);
   updateGroundDrops(dt,now);
+  updateRain(dt);
+  tickTime(dt);
 
   for(const g of others.values())g.position.lerp(new THREE.Vector3(...g.userData.t),.25);
   if(now-tSend>100){tSend=now;send({t:'pos',p:[P.x,P.y,P.z],r:[P.yaw,P.pitch]});}

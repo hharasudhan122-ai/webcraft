@@ -1,0 +1,37 @@
+[
+  {
+    "id": "anime",
+    "name": "\u2601\ufe0f Anime Clouds (Default)",
+    "desc": "Stylized vibrant anime cloudscapes with smooth day/night cycle",
+    "times": [
+      "day",
+      "sunset",
+      "night",
+      "rain"
+    ]
+  },
+  {
+    "id": "realistic",
+    "name": "\ud83c\udf05 Realistic Atmosphere",
+    "desc": "Ultra realistic sky & clouds, fiery sunsets, starry night, overcast rain & thunder",
+    "times": [
+      "day",
+      "sunset",
+      "night",
+      "rain",
+      "thunder"
+    ]
+  },
+  {
+    "id": "dramatic",
+    "name": "\u26a1 Dramatic Skies",
+    "desc": "Photorealistic 3D celestial skybox, dynamic cloud layers & vivid cosmic night",
+    "times": [
+      "day",
+      "sunset",
+      "night",
+      "rain",
+      "thunder"
+    ]
+  }
+]
