@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>WebCraft</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="description" content="Play a Minecraft-style world in your browser. Host a room, invite friends via code, join over LAN or Internet.">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700&family=Bitter:wght@700;900&display=swap" rel="stylesheet">
@@ -127,6 +127,84 @@ canvas#c{position:fixed;inset:0;width:100%;height:100%;display:none}
 #pal .slot{width:38px;height:38px}
 .pl{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:5px 0;border-bottom:1px solid var(--line)}
 #brk{position:fixed;left:50%;top:calc(50% + 24px);width:60px;height:5px;margin-left:-30px;background:#0008;display:none}#brk i{display:block;height:100%;background:#fff;width:0}
+
+/* ===== MOBILE TOUCH CONTROLS ===== */
+#touch-controls{display:none;position:fixed;inset:0;pointer-events:none;z-index:60;touch-action:none;user-select:none;-webkit-user-select:none}
+body.touch-enabled #touch-controls{display:block}
+
+.touch-btn{
+  pointer-events:auto;background:rgba(20,30,42,0.65);
+  border:2px solid rgba(255,255,255,0.22);color:#fff;
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  border-radius:12px;font:700 14px 'Barlow Semi Condensed',sans-serif;
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 4px 10px rgba(0,0,0,0.45);cursor:pointer;
+  touch-action:none;user-select:none;-webkit-user-select:none;
+  transition:transform .06s,background .06s,border-color .06s;
+}
+.touch-btn:active,.touch-btn.pressed{
+  background:rgba(126,200,80,0.5);border-color:#7ec850;transform:scale(0.92);
+}
+
+/* D-PAD (Bottom-Left) */
+#touch-dpad{
+  position:fixed;left:16px;bottom:20px;
+  display:flex;flex-direction:column;align-items:center;gap:6px;
+  pointer-events:auto;z-index:65;
+}
+.dpad-row{display:flex;gap:6px;align-items:center;justify-content:center}
+.dpad-btn{width:50px;height:50px;font-size:22px;border-radius:12px}
+#btn-sprint.active{
+  background:rgba(245,200,66,0.45);border-color:#f5c842;color:#f5c842;
+}
+
+/* ACTION BUTTONS (Bottom-Right) */
+#touch-actions{
+  position:fixed;right:16px;bottom:20px;
+  display:flex;flex-direction:column;gap:8px;align-items:flex-end;
+  pointer-events:auto;z-index:65;
+}
+.act-btn{
+  height:46px;padding:0 14px;font-size:13px;border-radius:12px;
+  min-width:100px;letter-spacing:.5px;
+}
+.btn-jump{
+  height:54px;min-width:115px;font-size:15px;
+  background:rgba(58,143,255,0.4);border-color:rgba(58,143,255,0.7);
+}
+.btn-mine{
+  background:rgba(224,112,96,0.4);border-color:rgba(224,112,96,0.7);
+}
+.btn-place{
+  background:rgba(126,200,80,0.4);border-color:rgba(126,200,80,0.7);
+}
+
+/* TOP TOUCH BAR */
+#touch-top-bar{
+  position:fixed;top:10px;left:10px;
+  display:flex;gap:6px;pointer-events:auto;z-index:65;
+}
+.sm-touch-btn{
+  height:36px;padding:0 10px;font-size:12px;border-radius:8px;
+}
+
+/* MOBILE HUD RESPONSIVENESS */
+@media(max-width:768px){
+  #hotbar{
+    bottom:82px;max-width:96vw;gap:2px;padding:3px;
+  }
+  .slot{
+    width:clamp(32px,9.2vw,44px);height:clamp(32px,9.2vw,44px);
+  }
+  .slot img{max-width:28px;max-height:28px}
+  #help{display:none}
+  #top{top:54px;font-size:12px}
+  .panel{
+    width:95vw;max-width:480px;max-height:86vh;padding:10px;
+  }
+  #chatlog{width:90vw;bottom:140px}
+  #chatbox{width:90vw;bottom:130px}
+}
 </style></head><body>
 
 <div id="lobby"><div class="wrap">
@@ -181,6 +259,11 @@ canvas#c{position:fixed;inset:0;width:100%;height:100%;display:none}
 
   <!-- LAN PANE -->
   <div class="pane" id="pane-lan">
+    <div style="background:#132230;border:1px solid #3a8fff66;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;line-height:1.5">
+      <b style="color:var(--accent);font-size:14px">💡 Offline LAN vs. Cloud Link (Render / Vercel):</b><br>
+      • <strong>When on Render:</strong> The link loads over the Internet. If you lose internet connection, the Render webpage cannot open.<br>
+      • <strong>True Offline LAN (0% Internet):</strong> One player simply downloads/clones the GitHub repo on their laptop, runs <code>npm install && npm start</code>, and hosts locally. Anyone connected to the same Wi-Fi or phone hotspot can then open <code>http://&lt;HOST_IP&gt;:3000</code> with <em>no active internet required</em>!
+    </div>
     <div class="grid2">
       <div class="card">
         <h2>Host on LAN <span>No internet needed</span></h2>
@@ -238,12 +321,65 @@ canvas#c{position:fixed;inset:0;width:100%;height:100%;display:none}
   <div id="cross"></div><div id="brk"><i></i></div>
   <div id="help">WASD move · Space jump · Shift sprint · E inventory · Q drop · T chat · R respawn · Tab host panel · double-tap Space fly (creative)</div>
   <div id="top"><div id="mode"></div>Room <b id="rc" title="Click to copy"></b><div id="pcount"></div></div>
-  <div id="chatlog"></div><input id="chatin" maxlength="200" placeholder="Say something…">
+  <div id="chatlog"></div>
+  <div id="chatbox" style="position:fixed;left:12px;bottom:60px;width:min(440px,90vw);display:none;z-index:90">
+    <div style="display:flex;gap:6px">
+      <input id="chatin" maxlength="200" placeholder="Say something…" style="flex:1">
+      <button id="chatsend" class="btn-green" style="width:auto;margin:0;padding:8px 14px">Send</button>
+      <button id="chatclose" class="btn-small" style="padding:8px 12px">✕</button>
+    </div>
+  </div>
   <div id="hotbar"></div>
-  <div class="panel" id="invp"><div id="chestbox" style="display:none"><div style="margin-bottom:6px">Chest</div><div id="chest"></div></div>
+  
+  <!-- Mobile On-Screen Touch Controls -->
+  <div id="touch-controls">
+    <!-- D-Pad (Movement) -->
+    <div id="touch-dpad">
+      <div class="dpad-row"><button type="button" class="touch-btn dpad-btn" id="btn-up">▲</button></div>
+      <div class="dpad-row">
+        <button type="button" class="touch-btn dpad-btn" id="btn-left">◀</button>
+        <button type="button" class="touch-btn dpad-btn" id="btn-sprint" title="Toggle Sprint">⚡</button>
+        <button type="button" class="touch-btn dpad-btn" id="btn-right">▶</button>
+      </div>
+      <div class="dpad-row"><button type="button" class="touch-btn dpad-btn" id="btn-down">▼</button></div>
+    </div>
+
+    <!-- Actions (Mine, Place, Jump) -->
+    <div id="touch-actions">
+      <button type="button" class="touch-btn act-btn btn-mine" id="btn-mine">⛏️ MINE</button>
+      <button type="button" class="touch-btn act-btn btn-place" id="btn-place">🧱 PLACE</button>
+      <button type="button" class="touch-btn act-btn btn-jump" id="btn-jump">⬆ JUMP</button>
+    </div>
+
+    <!-- Top Touch Bar -->
+    <div id="touch-top-bar">
+      <button type="button" class="touch-btn sm-touch-btn" id="btn-inv">🎒 INV</button>
+      <button type="button" class="touch-btn sm-touch-btn" id="btn-drop">⏏️ DROP</button>
+      <button type="button" class="touch-btn sm-touch-btn" id="btn-chat">💬 CHAT</button>
+      <button type="button" class="touch-btn sm-touch-btn" id="btn-fly" style="display:none">🕊️ FLY</button>
+      <button type="button" class="touch-btn sm-touch-btn" id="btn-host-ui" style="display:none">👑 HOST</button>
+      <button type="button" class="touch-btn sm-touch-btn" id="btn-toggle-touch">📱</button>
+    </div>
+  </div>
+
+  <div class="panel" id="invp">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <b style="font-size:16px">Inventory &amp; Crafting</b>
+      <button type="button" class="btn-small" onclick="closeUI()" style="padding:4px 10px">✕ Close</button>
+    </div>
+    <div id="chestbox" style="display:none"><div style="margin-bottom:6px">Chest</div><div id="chest"></div></div>
     <div id="craftbox" style="display:flex;gap:18px;align-items:center;margin-bottom:10px"><div><div style="margin-bottom:6px">Crafting</div><div id="craft" style="display:grid;grid-template-columns:repeat(3,auto);gap:4px"></div></div><div>→</div><div id="out"></div></div>
-    <div id="inv"></div><div id="creative" style="display:none"><input id="palq" placeholder="Search blocks and tools (creative)"><div id="pal"></div><button id="trash" style="margin-top:6px">Drop held stack</button></div></div>
-  <div class="panel" id="hostp"><b>Host controls</b><div id="pls"></div><label style="display:flex;gap:8px;align-items:center;margin-top:10px"><input type="checkbox" id="allc" style="width:auto"> Everyone is in creative mode</label></div>
+    <div id="inv"></div><div id="creative" style="display:none"><input id="palq" placeholder="Search blocks and tools (creative)"><div id="pal"></div><button id="trash" style="margin-top:6px">Drop held stack</button></div>
+  </div>
+
+  <div class="panel" id="hostp">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <b style="font-size:16px">Host Controls</b>
+      <button type="button" class="btn-small" onclick="closeUI()" style="padding:4px 10px">✕ Close</button>
+    </div>
+    <div id="pls"></div>
+    <label style="display:flex;gap:8px;align-items:center;margin-top:10px"><input type="checkbox" id="allc" style="width:auto"> Everyone is in creative mode</label>
+  </div>
 </div>
 <div id="cursor"></div>
 

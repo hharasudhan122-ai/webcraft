@@ -1183,10 +1183,10 @@ function renderHost(){
 $('#allc').onchange=e=>{S.allCreative=e.target.checked;send({t:'allCreative',on:e.target.checked});};
 
 function openUI(name){
-  ui=name;document.exitPointerLock();
+  ui=name;try{document.exitPointerLock();}catch(e){}
   $('#invp').style.display=(name==='inv'||name==='chest')?'block':'none';
   $('#hostp').style.display=name==='host'?'block':'none';
-  $('#chatin').style.display=name==='chat'?'block':'none';
+  if($('#chatbox'))$('#chatbox').style.display=name==='chat'?'block':'none';
   if(name==='chat')$('#chatin').focus();
   if(name==='inv')renderPalette();
 }
@@ -1195,9 +1195,21 @@ function closeUI(){
   ui=null;openUIHide();
 }
 function openUIHide(){
-  $('#invp').style.display=$('#hostp').style.display=$('#chatin').style.display='none';
-  $('#chatin').blur();$('#c').requestPointerLock();
+  $('#invp').style.display=$('#hostp').style.display='none';
+  if($('#chatbox'))$('#chatbox').style.display='none';
+  $('#chatin').blur();
+  if(!document.body.classList.contains('touch-enabled')){
+    try{$('#c').requestPointerLock();}catch(e){}
+  }
 }
+function submitChat(){
+  const t=$('#chatin').value.trim();
+  if(t)send({t:'chat',text:t});
+  $('#chatin').value='';closeUI();
+}
+if($('#chatsend'))$('#chatsend').onclick=submitChat;
+if($('#chatclose'))$('#chatclose').onclick=closeUI;
+
 $('#rc').onclick=()=>navigator.clipboard&&navigator.clipboard.writeText(S.code);
 function modeText(){$('#mode').textContent=S.creative?'Creative mode':'Survival mode';}
 function chatLine(name,text){
@@ -1209,7 +1221,7 @@ function chatLine(name,text){
 addEventListener('keydown',e=>{
   if(!S.started)return;
   if(ui==='chat'){
-    if(e.code==='Enter'){const t=$('#chatin').value.trim();if(t)send({t:'chat',text:t});$('#chatin').value='';closeUI();}
+    if(e.code==='Enter'){submitChat();return;}
     else if(e.code==='Escape')closeUI();return;
   }
   if(e.code==='Escape'){if(ui)closeUI();return;}
@@ -1230,16 +1242,30 @@ addEventListener('keydown',e=>{
 });
 addEventListener('keyup',e=>{K[e.code]=false;});
 addEventListener('wheel',e=>{if(ui||!S.started)return;slot=(slot+(e.deltaY>0?1:8))%9;renderUI();});
+
+// Direct touch/click on hotbar slots
+document.addEventListener('pointerdown',e=>{
+  const s=e.target.closest('#hotbar .slot');
+  if(s&&!ui&&S.started){
+    const i=+s.dataset.i;
+    if(!isNaN(i)&&i>=0&&i<9){slot=i;renderUI();}
+  }
+});
+
 addEventListener('mousemove',e=>{
   if(document.pointerLockElement===$('#c')){
     P.yaw-=e.movementX*.0022;
     P.pitch=Math.max(-1.55,Math.min(1.55,P.pitch-e.movementY*.0022));
   }
 });
-$('#c').addEventListener('click',()=>{if(!ui)$('#c').requestPointerLock();});
+$('#c').addEventListener('click',()=>{
+  if(!ui&&!document.body.classList.contains('touch-enabled')){
+    try{$('#c').requestPointerLock();}catch(e){}
+  }
+});
 
 addEventListener('mousedown',e=>{
-  if(!S.started||ui||document.pointerLockElement!==$('#c'))return;
+  if(!S.started||ui||(!document.body.classList.contains('touch-enabled')&&document.pointerLockElement!==$('#c')))return;
   if(e.button===0){
     const t=ray();
     if(t&&IS_DOOR[t.b]&&!K.ShiftLeft){
@@ -1267,6 +1293,188 @@ addEventListener('mousedown',e=>{
 addEventListener('mouseup',e=>{if(e.button===0)mouseL=false;});
 addEventListener('contextmenu',e=>e.preventDefault());
 
+// ---------- Mobile Touch Controls ----------
+const isTouchDevice=('ontouchstart' in window)||navigator.maxTouchPoints>0||/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)||window.innerWidth<=900;
+if(isTouchDevice)document.body.classList.add('touch-enabled');
+
+// Touch-to-Look: Drag on game screen to rotate camera
+let lookTouchId=null,lastLookX=0,lastLookY=0;
+window.addEventListener('touchstart',e=>{
+  if(!S.started||ui)return;
+  for(let i=0;i<e.changedTouches.length;i++){
+    const t=e.changedTouches[i];
+    const el=document.elementFromPoint(t.clientX,t.clientY);
+    if(el&&el.closest('#touch-dpad,#touch-actions,#touch-top-bar,#hotbar,.panel,input,button,select')){
+      continue;
+    }
+    if(lookTouchId===null){
+      lookTouchId=t.identifier;
+      lastLookX=t.clientX;
+      lastLookY=t.clientY;
+    }
+  }
+},{passive:false});
+
+window.addEventListener('touchmove',e=>{
+  if(!S.started||ui)return;
+  for(let i=0;i<e.changedTouches.length;i++){
+    const t=e.changedTouches[i];
+    if(t.identifier===lookTouchId){
+      const dx=t.clientX-lastLookX;
+      const dy=t.clientY-lastLookY;
+      P.yaw-=dx*0.0055;
+      P.pitch=Math.max(-1.55,Math.min(1.55,P.pitch-dy*0.0055));
+      lastLookX=t.clientX;
+      lastLookY=t.clientY;
+      e.preventDefault();
+    }
+  }
+},{passive:false});
+
+const endLookTouch=e=>{
+  for(let i=0;i<e.changedTouches.length;i++){
+    if(e.changedTouches[i].identifier===lookTouchId)lookTouchId=null;
+  }
+};
+window.addEventListener('touchend',endLookTouch,{passive:false});
+window.addEventListener('touchcancel',endLookTouch,{passive:false});
+
+// D-Pad Touch Handlers (Multi-touch compatible)
+function bindDpadBtn(btnId,keyCode){
+  const el=document.getElementById(btnId);
+  if(!el)return;
+  const onStart=e=>{e.preventDefault();e.stopPropagation();K[keyCode]=true;el.classList.add('pressed');};
+  const onEnd=e=>{e.preventDefault();e.stopPropagation();K[keyCode]=false;el.classList.remove('pressed');};
+  el.addEventListener('touchstart',onStart,{passive:false});
+  el.addEventListener('touchend',onEnd,{passive:false});
+  el.addEventListener('touchcancel',onEnd,{passive:false});
+  el.addEventListener('mousedown',onStart);
+  el.addEventListener('mouseup',onEnd);
+  el.addEventListener('mouseleave',onEnd);
+}
+bindDpadBtn('btn-up','KeyW');
+bindDpadBtn('btn-down','KeyS');
+bindDpadBtn('btn-left','KeyA');
+bindDpadBtn('btn-right','KeyD');
+
+// D-pad sliding support
+const dpadEl=document.getElementById('touch-dpad');
+if(dpadEl){
+  dpadEl.addEventListener('touchmove',e=>{
+    e.preventDefault();
+    for(let i=0;i<e.touches.length;i++){
+      const t=e.touches[i];
+      const target=document.elementFromPoint(t.clientX,t.clientY);
+      const btns=[{id:'btn-up',k:'KeyW'},{id:'btn-down',k:'KeyS'},{id:'btn-left',k:'KeyA'},{id:'btn-right',k:'KeyD'}];
+      btns.forEach(b=>{
+        const el=document.getElementById(b.id);
+        if(el){
+          if(target===el){K[b.k]=true;el.classList.add('pressed');}
+          else if(!target||!target.classList.contains('dpad-btn')){K[b.k]=false;el.classList.remove('pressed');}
+        }
+      });
+    }
+  },{passive:false});
+}
+
+// Sprint Toggle
+let isSprinting=false;
+const sprintBtn=document.getElementById('btn-sprint');
+if(sprintBtn){
+  const toggleSprint=e=>{
+    e.preventDefault();e.stopPropagation();
+    isSprinting=!isSprinting;
+    K.ShiftLeft=isSprinting;
+    if(isSprinting)sprintBtn.classList.add('active');
+    else sprintBtn.classList.remove('active');
+  };
+  sprintBtn.addEventListener('touchstart',toggleSprint,{passive:false});
+  sprintBtn.addEventListener('click',toggleSprint);
+}
+
+// Jump Button (with double-tap fly support in creative)
+const jumpBtn=document.getElementById('btn-jump');
+if(jumpBtn){
+  const startJump=e=>{
+    e.preventDefault();e.stopPropagation();
+    jumpBtn.classList.add('pressed');
+    const now=performance.now();
+    if(S.creative&&now-lastSpace<350){P.fly=!P.fly;P.vy=0;}
+    lastSpace=now;
+    K.Space=true;
+  };
+  const stopJump=e=>{
+    e.preventDefault();e.stopPropagation();
+    jumpBtn.classList.remove('pressed');
+    K.Space=false;
+  };
+  jumpBtn.addEventListener('touchstart',startJump,{passive:false});
+  jumpBtn.addEventListener('touchend',stopJump,{passive:false});
+  jumpBtn.addEventListener('touchcancel',stopJump,{passive:false});
+  jumpBtn.addEventListener('mousedown',startJump);
+  jumpBtn.addEventListener('mouseup',stopJump);
+  jumpBtn.addEventListener('mouseleave',stopJump);
+}
+
+// Mine Button (hold to mine, door toggle check)
+const mineBtn=document.getElementById('btn-mine');
+if(mineBtn){
+  const startMine=e=>{
+    e.preventDefault();e.stopPropagation();
+    mineBtn.classList.add('pressed');
+    const t=ray();
+    if(t&&IS_DOOR[t.b]&&!K.ShiftLeft){
+      toggleDoor(t.p[0],t.p[1],t.p[2]);
+      return;
+    }
+    mouseL=true;
+  };
+  const stopMine=e=>{
+    e.preventDefault();e.stopPropagation();
+    mineBtn.classList.remove('pressed');
+    mouseL=false;
+  };
+  mineBtn.addEventListener('touchstart',startMine,{passive:false});
+  mineBtn.addEventListener('touchend',stopMine,{passive:false});
+  mineBtn.addEventListener('touchcancel',stopMine,{passive:false});
+  mineBtn.addEventListener('mousedown',startMine);
+  mineBtn.addEventListener('mouseup',stopMine);
+  mineBtn.addEventListener('mouseleave',stopMine);
+}
+
+// Place Button
+const placeBtn=document.getElementById('btn-place');
+if(placeBtn){
+  const doPlace=e=>{
+    e.preventDefault();e.stopPropagation();
+    placeBtn.classList.add('pressed');
+    setTimeout(()=>placeBtn.classList.remove('pressed'),120);
+    const t=ray();
+    if(!t)return;
+    if(IS_DOOR[t.b]){
+      toggleDoor(t.p[0],t.p[1],t.p[2]);
+      return;
+    }
+    const blockName=S.names[t.b];
+    if(blockName==='minecraft:chest'&&!K.ShiftLeft){
+      send({t:'openChest',x:t.p[0],y:t.p[1],z:t.p[2]});
+      return;
+    }
+    const it=S.inv[slot];
+    if(it)send({t:'place',x:t.p[0]+t.n[0],y:t.p[1]+t.n[1],z:t.p[2]+t.n[2],slot});
+  };
+  placeBtn.addEventListener('touchstart',doPlace,{passive:false});
+  placeBtn.addEventListener('click',doPlace);
+}
+
+// Top Bar Buttons
+if($('#btn-inv'))$('#btn-inv').onclick=()=>{ui==='inv'?closeUI():openUI('inv');};
+if($('#btn-drop'))$('#btn-drop').onclick=()=>send({t:'dropHeld',slot});
+if($('#btn-chat'))$('#btn-chat').onclick=()=>openUI('chat');
+if($('#btn-fly'))$('#btn-fly').onclick=()=>{if(S.creative){P.fly=!P.fly;P.vy=0;}};
+if($('#btn-host-ui'))$('#btn-host-ui').onclick=()=>{if(S.host){ui==='host'?closeUI():(!ui&&openUI('host'),renderHost());}};
+if($('#btn-toggle-touch'))$('#btn-toggle-touch').onclick=()=>{document.body.classList.toggle('touch-enabled');};
+
 // ---------- Network ----------
 function onMsg(m){
   switch(m.t){
@@ -1281,7 +1489,12 @@ function onMsg(m){
       $('#rc').textContent=m.code;modeText();initThree();
       if(m.drops)for(const d of m.drops)addGroundDrop(d);
       syncPlayers(m.players);renderUI();
-      $('#c').requestPointerLock();requestAnimationFrame(loop);
+      if($('#btn-fly'))$('#btn-fly').style.display=m.creative?'flex':'none';
+      if($('#btn-host-ui'))$('#btn-host-ui').style.display=m.host?'flex':'none';
+      if(!document.body.classList.contains('touch-enabled')){
+        try{$('#c').requestPointerLock();}catch(e){}
+      }
+      requestAnimationFrame(loop);
       break;
     case'names':S.names=m.names;rebuildDerived();break;
     case'block':setB(m.x,m.y,m.z,m.id);break;
@@ -1297,9 +1510,15 @@ function onMsg(m){
       renderUI();break;
     case'players':syncPlayers(m.players);break;
     case'pos':{const g=others.get(m.id);if(g){g.userData.t=m.p;g.rotation.y=m.r[0];}break;}
-    case'creative':S.creative=m.on;if(!m.on)P.fly=false;modeText();renderUI();break;
+    case'creative':
+      S.creative=m.on;if(!m.on)P.fly=false;modeText();renderUI();
+      if($('#btn-fly'))$('#btn-fly').style.display=m.on?'flex':'none';
+      break;
     case'respawn':P.x=m.p[0];P.y=m.p[1];P.z=m.p[2];P.vy=0;break;
-    case'host':S.host=true;renderHost();break;
+    case'host':
+      S.host=true;renderHost();
+      if($('#btn-host-ui'))$('#btn-host-ui').style.display='flex';
+      break;
     case'chat':chatLine(m.name,m.text);break;
     case'drop':addGroundDrop(m.drop);break;
     case'pickup':

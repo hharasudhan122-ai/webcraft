@@ -1,5 +1,6 @@
 const express=require('express'),http=require('http'),{WebSocketServer}=require('ws'),fs=require('fs'),path=require('path'),zlib=require('zlib'),cp=require('child_process'),os=require('os');
 const ROOT=path.join(__dirname,'..'),CFG=JSON.parse(fs.readFileSync(path.join(ROOT,'config.json')));
+if(process.env.SUPABASE_URL&&process.env.SUPABASE_ANON_KEY){CFG.supabase={url:process.env.SUPABASE_URL,anonKey:process.env.SUPABASE_ANON_KEY};}
 const PORT=process.env.PORT||CFG.port||3000;
 const app=express(),srv=http.createServer(app);
 app.use(express.static(path.join(ROOT,'public')));
