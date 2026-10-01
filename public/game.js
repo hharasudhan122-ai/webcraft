@@ -1593,7 +1593,7 @@ window.addEventListener('touchstart',e=>{
   for(let i=0;i<e.changedTouches.length;i++){
     const t=e.changedTouches[i];
     const el=document.elementFromPoint(t.clientX,t.clientY);
-    if(el&&el.closest('#touch-dpad,#touch-actions,#touch-top-bar,#hotbar,.panel,input,button,select')){
+    if(el&&el.closest('#touch-dpad,#touch-actions,#touch-top-bar,#hotbar,.panel,#minimap-box,#coords-hud,#waypoint-prompt,input,button,select')){
       continue;
     }
     if(lookTouchId===null){
@@ -1756,10 +1756,23 @@ if(placeBtn){
   placeBtn.addEventListener('click',doPlace);
 }
 
-// Top Bar Buttons
-if($('#btn-inv'))$('#btn-inv').onclick=()=>{ui==='inv'?closeUI():openUI('inv');};
-if($('#btn-map-ui'))$('#btn-map-ui').onclick=()=>{ui==='map'?closeUI():openUI('map');};
-if($('#btn-top-map'))$('#btn-top-map').onclick=()=>{ui==='map'?closeUI():openUI('map');};
+// Top Bar & Navigation Buttons (Mouse Click + Phone Touch)
+function bindTouchTap(selector, fn){
+  const el = $(selector);
+  if (!el) return;
+  el.addEventListener('click', fn);
+  el.addEventListener('touchend', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    fn(e);
+  }, { passive: false });
+}
+
+bindTouchTap('#btn-inv', () => { ui === 'inv' ? closeUI() : openUI('inv'); });
+bindTouchTap('#btn-map-ui', () => { ui === 'map' ? closeUI() : openUI('map'); });
+bindTouchTap('#btn-top-map', () => { ui === 'map' ? closeUI() : openUI('map'); });
+bindTouchTap('#minimap-box', () => { ui === 'map' ? closeUI() : openUI('map'); });
+bindTouchTap('#waypoint-prompt', () => { teleportToMarked(); });
 if($('#btn-drop'))$('#btn-drop').onclick=()=>send({t:'dropHeld',slot});
 if($('#btn-chat'))$('#btn-chat').onclick=()=>openUI('chat');
 if($('#btn-fly'))$('#btn-fly').onclick=()=>{if(S.creative){P.fly=!P.fly;P.vy=0;}};
@@ -2434,6 +2447,91 @@ function initMapEvents() {
     }
   });
 
+  // Touch dragging, pinch-to-zoom, and tap-to-mark for phones & tablets
+  let touchStartDist = 0, initialPinchZoom = 1;
+  let touchStartX = 0, touchStartY = 0;
+  let touchMoved = false;
+
+  cvs.addEventListener('touchstart', e => {
+    if (e.touches.length === 1) {
+      const t = e.touches[0];
+      isMapDragging = true;
+      touchMoved = false;
+      touchStartX = t.clientX;
+      touchStartY = t.clientY;
+      dragStartPanX = mapPanX;
+      dragStartPanZ = mapPanZ;
+    } else if (e.touches.length === 2) {
+      isMapDragging = false;
+      const t1 = e.touches[0], t2 = e.touches[1];
+      touchStartDist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+      initialPinchZoom = mapZoom;
+    }
+    e.preventDefault();
+  }, { passive: false });
+
+  cvs.addEventListener('touchmove', e => {
+    if (e.touches.length === 1 && isMapDragging) {
+      const t = e.touches[0];
+      const dx = (t.clientX - touchStartX) / mapZoom;
+      const dz = (t.clientY - touchStartY) / mapZoom;
+      if (Math.abs(t.clientX - touchStartX) > 4 || Math.abs(t.clientY - touchStartY) > 4) {
+        touchMoved = true;
+      }
+      mapPanX = dragStartPanX - dx;
+      mapPanZ = dragStartPanZ - dz;
+
+      const rect = cvs.getBoundingClientRect();
+      const clientX = t.clientX - rect.left;
+      const clientY = t.clientY - rect.top;
+      const cx = cvs.width / 2, cy = cvs.height / 2;
+      const scaleX = cvs.width / rect.width, scaleY = cvs.height / rect.height;
+      mapHoverX = Math.floor(mapPanX + (clientX * scaleX - cx) / mapZoom);
+      mapHoverZ = Math.floor(mapPanZ + (clientY * scaleY - cy) / mapZoom);
+
+      const top = getTopBlockAt(mapHoverX, mapHoverZ);
+      const biome = getBiomeAt(mapHoverX, mapHoverZ);
+      const hoverEl = document.getElementById('map-hover-coords');
+      if (hoverEl) {
+        let blockDesc = top ? (top.name.replace('minecraft:', '').replace(/_/g, ' ') + ` (Y: ${top.y})`) : 'Unloaded';
+        hoverEl.textContent = `Cursor: X: ${mapHoverX}, Z: ${mapHoverZ} · ${biome} (${blockDesc})`;
+      }
+
+      renderBigMap();
+    } else if (e.touches.length === 2 && touchStartDist > 0) {
+      const t1 = e.touches[0], t2 = e.touches[1];
+      const curDist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+      mapZoom = Math.max(0.4, Math.min(6.0, initialPinchZoom * (curDist / touchStartDist)));
+      renderBigMap();
+    }
+    e.preventDefault();
+  }, { passive: false });
+
+  cvs.addEventListener('touchend', e => {
+    if (isMapDragging) {
+      isMapDragging = false;
+      if (!touchMoved && e.changedTouches.length > 0) {
+        // Tap to mark destination!
+        const t = e.changedTouches[0];
+        const rect = cvs.getBoundingClientRect();
+        const clientX = t.clientX - rect.left;
+        const clientY = t.clientY - rect.top;
+        if (clientX >= 0 && clientX <= rect.width && clientY >= 0 && clientY <= rect.height) {
+          const cx = cvs.width / 2, cy = cvs.height / 2;
+          const scaleX = cvs.width / rect.width, scaleY = cvs.height / rect.height;
+          const targetX = Math.floor(mapPanX + (clientX * scaleX - cx) / mapZoom);
+          const targetZ = Math.floor(mapPanZ + (clientY * scaleY - cy) / mapZoom);
+
+          markedPoint = { x: targetX, z: targetZ };
+          updateMarkedInfoUI();
+          renderBigMap();
+        }
+      }
+    }
+    touchStartDist = 0;
+    e.preventDefault();
+  }, { passive: false });
+
   cvs.onwheel = e => {
     e.preventDefault();
     const zoomFactor = e.deltaY > 0 ? 0.82 : 1.22;
@@ -2441,24 +2539,30 @@ function initMapEvents() {
     renderBigMap();
   };
 
+  const bindBtnTouch = (btn, fn) => {
+    if (!btn) return;
+    btn.onclick = fn;
+    btn.addEventListener('touchend', e => { e.preventDefault(); fn(e); }, { passive: false });
+  };
+
   const btnZoomIn = document.getElementById('map-zoom-in');
-  if (btnZoomIn) btnZoomIn.onclick = () => { mapZoom = Math.min(6.0, mapZoom * 1.3); renderBigMap(); };
+  bindBtnTouch(btnZoomIn, () => { mapZoom = Math.min(6.0, mapZoom * 1.3); renderBigMap(); });
 
   const btnZoomOut = document.getElementById('map-zoom-out');
-  if (btnZoomOut) btnZoomOut.onclick = () => { mapZoom = Math.max(0.4, mapZoom * 0.75); renderBigMap(); };
+  bindBtnTouch(btnZoomOut, () => { mapZoom = Math.max(0.4, mapZoom * 0.75); renderBigMap(); });
 
   const btnCenterMe = document.getElementById('map-center-me');
-  if (btnCenterMe) btnCenterMe.onclick = () => { mapPanX = P.x; mapPanZ = P.z; renderBigMap(); };
+  bindBtnTouch(btnCenterMe, () => { mapPanX = P.x; mapPanZ = P.z; renderBigMap(); });
 
   const btnTp = document.getElementById('btn-teleport');
-  if (btnTp) btnTp.onclick = teleportToMarked;
+  bindBtnTouch(btnTp, teleportToMarked);
 
   const btnClear = document.getElementById('btn-clear-mark');
-  if (btnClear) btnClear.onclick = () => {
+  bindBtnTouch(btnClear, () => {
     markedPoint = null;
     updateMarkedInfoUI();
     renderBigMap();
-  };
+  });
 }
 
 function updateMarkedInfoUI() {
