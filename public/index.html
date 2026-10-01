@@ -133,7 +133,7 @@ canvas#c{position:fixed;inset:0;width:100%;height:100%;display:none}
 .slot span{position:relative;text-shadow:0 1px 2px #000;padding:0 2px;word-break:break-word}
 .slot img{max-width:38px;max-height:38px;image-rendering:pixelated;image-rendering:crisp-edges;position:relative;z-index:2;pointer-events:none}
 #pal .slot img{max-width:28px;max-height:28px}
-#top{position:fixed;right:12px;top:10px;text-align:right;text-shadow:0 1px 3px #000;font-size:14px;pointer-events:none}
+#top{position:fixed;right:132px;top:10px;text-align:right;text-shadow:0 1px 3px #000;font-size:14px;pointer-events:none}
 #top b{font-size:22px;letter-spacing:4px;pointer-events:auto;cursor:pointer}
 #help{position:fixed;left:12px;top:10px;font-size:13px;text-shadow:0 1px 3px #000;opacity:.85}
 #chatlog{position:fixed;left:12px;bottom:80px;width:min(420px,80vw);font-size:14px;text-shadow:0 1px 3px #000;pointer-events:none}
@@ -222,7 +222,51 @@ body.touch-enabled #touch-controls{display:block}
   }
   #chatlog{width:90vw;bottom:140px}
   #chatbox{width:90vw;bottom:130px}
+  #coords-hud{top:46px;left:8px;padding:4px 8px}
+  #coords-hud .coord-xyz{font-size:13px}
+  #minimap-box{top:8px;right:8px;width:84px;height:84px}
 }
+
+/* Coordinates HUD on side of screen */
+#coords-hud{
+  position:fixed;top:46px;left:14px;z-index:45;pointer-events:none;
+  background:rgba(12,18,26,0.85);border:1px solid rgba(255,255,255,0.18);
+  backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+  padding:6px 12px;border-radius:8px;font-family:'Barlow Semi Condensed',sans-serif;
+  color:#fff;box-shadow:0 4px 14px rgba(0,0,0,0.55);display:none;
+}
+#coords-hud .coord-title{font-size:10px;letter-spacing:1px;color:var(--gold);font-weight:700}
+#coords-hud .coord-xyz{font-size:15px;font-weight:700;color:#f0f5fa;margin:1px 0}
+#coords-hud .coord-facing{font-size:11px;color:var(--dim)}
+
+/* Minimap Box on screen */
+#minimap-box{
+  position:fixed;top:12px;right:14px;z-index:45;width:108px;height:108px;
+  border-radius:50%;border:2.5px solid rgba(245,200,66,0.85);
+  background:rgba(10,16,24,0.9);box-shadow:0 4px 16px rgba(0,0,0,0.7), inset 0 0 10px rgba(0,0,0,0.6);
+  overflow:hidden;cursor:pointer;pointer-events:auto;display:none;
+  transition:transform .12s,border-color .12s;
+}
+#minimap-box:hover{transform:scale(1.05);border-color:var(--gold)}
+#minimap-box:active{transform:scale(0.95)}
+#minimap-canvas{width:100%;height:100%;display:block;border-radius:50%}
+#minimap-badge{
+  position:absolute;bottom:2px;left:50%;transform:translateX(-50%);
+  background:rgba(10,14,20,0.88);border:1px solid var(--gold);border-radius:8px;
+  padding:1px 6px;font:700 9px 'Barlow Semi Condensed',sans-serif;color:var(--gold);
+  letter-spacing:0.5px;pointer-events:none;white-space:nowrap;
+}
+
+/* Floating Waypoint indicator prompt */
+#waypoint-prompt{
+  position:fixed;left:50%;top:64px;transform:translateX(-50%);
+  background:rgba(16,24,34,0.88);border:1px solid var(--gold);
+  border-radius:20px;padding:4px 12px;display:none;align-items:center;gap:8px;
+  z-index:45;box-shadow:0 4px 12px rgba(0,0,0,0.5);font-size:12px;color:#fff;
+  cursor:pointer;pointer-events:auto;
+}
+#waypoint-prompt:hover{background:rgba(24,36,50,0.95)}
+#waypoint-prompt b{color:var(--gold)}
 </style></head><body>
 
 <div id="lobby"><div class="wrap">
@@ -383,8 +427,29 @@ body.touch-enabled #touch-controls{display:block}
 <canvas id="c"></canvas>
 <div id="hud">
   <div id="cross"></div><div id="brk"><i></i></div>
-  <div id="help">WASD move · Space jump · Shift sprint · E inventory · K sky &amp; weather · Q drop · T chat · R respawn · Tab host panel · double-tap Space fly (creative)</div>
-  <div id="top"><div id="mode"></div>Room <b id="rc" title="Click to copy"></b><div id="pcount"></div><button id="btn-top-sky" type="button" class="btn-small" onclick="openUI('sky')" style="padding:2px 8px;font-size:11px;margin-left:6px;cursor:pointer">🌤️ Sky</button></div>
+  <div id="help">WASD move · Space jump · Shift sprint · E inventory · M map · K sky &amp; weather · Q drop · T chat · R respawn · Tab host panel · double-tap Space fly</div>
+  <div id="top"><div id="mode"></div>Room <b id="rc" title="Click to copy"></b><div id="pcount"></div><button id="btn-top-map" type="button" class="btn-small" onclick="openUI('map')" style="padding:2px 8px;font-size:11px;margin-left:6px;cursor:pointer">🗺️ Map [M]</button><button id="btn-top-sky" type="button" class="btn-small" onclick="openUI('sky')" style="padding:2px 8px;font-size:11px;margin-left:4px;cursor:pointer">🌤️ Sky [K]</button></div>
+  
+  <!-- Coordinates HUD on side of screen -->
+  <div id="coords-hud">
+    <div class="coord-title">XYZ POSITION</div>
+    <div id="coord-xyz" class="coord-xyz">X: 0, Y: 80, Z: 0</div>
+    <div id="coord-facing" class="coord-facing">Facing: South (+Z)</div>
+    <div id="coord-biome" class="coord-facing" style="color:var(--moss)">Biome: Plains</div>
+  </div>
+
+  <!-- Minimap Widget on screen -->
+  <div id="minimap-box" onclick="openUI('map')" title="Click or Press [M] to open World Map & Teleport">
+    <canvas id="minimap-canvas" width="108" height="108"></canvas>
+    <div id="minimap-badge">🗺️ MAP [M]</div>
+  </div>
+
+  <!-- Floating Waypoint Teleport Prompt -->
+  <div id="waypoint-prompt" onclick="teleportToMarked()">
+    <span>📍 <b id="wp-prompt-text">Waypoint marked</b></span>
+    <span style="background:var(--gold);color:#101418;font-weight:700;padding:2px 7px;border-radius:10px;font-size:11px">⚡ TP [T]</span>
+  </div>
+
   <div id="chatlog"></div>
   <div id="chatbox" style="position:fixed;left:12px;bottom:60px;width:min(440px,90vw);display:none;z-index:90">
     <div style="display:flex;gap:6px">
@@ -418,6 +483,7 @@ body.touch-enabled #touch-controls{display:block}
     <!-- Top Touch Bar -->
     <div id="touch-top-bar">
       <button type="button" class="touch-btn sm-touch-btn" id="btn-inv">🎒 INV</button>
+      <button type="button" class="touch-btn sm-touch-btn" id="btn-map-ui">🗺️ MAP</button>
       <button type="button" class="touch-btn sm-touch-btn" id="btn-sky-ui">🌤️ SKY</button>
       <button type="button" class="touch-btn sm-touch-btn" id="btn-drop">⏏️ DROP</button>
       <button type="button" class="touch-btn sm-touch-btn" id="btn-chat">💬 CHAT</button>
@@ -471,6 +537,40 @@ body.touch-enabled #touch-controls{display:block}
     <label style="display:flex;gap:8px;align-items:center;margin-top:6px;font-size:13px;color:var(--dim)">
       <input type="checkbox" id="chk-auto-time-ingame" checked style="width:auto"> ⏱️ Auto Day/Night Cycle
     </label>
+  </div>
+
+  <div class="panel" id="mapp" style="width:min(480px,95vw)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <b style="font-size:16px">🗺️ World Map &amp; Navigation</b>
+      <button type="button" class="btn-small" onclick="closeUI()" style="padding:4px 10px">✕ Close [M]</button>
+    </div>
+    <p style="font-size:12px;color:var(--dim);margin-bottom:8px">
+      Drag mouse to pan · Scroll to zoom · Click to mark destination · Press <b>[T]</b> to teleport!
+    </p>
+    <div id="map-wrap" style="position:relative;margin:0 auto;width:100%;height:320px;border:2px solid var(--line);border-radius:10px;overflow:hidden;background:#0a1016">
+      <canvas id="bigmap-canvas" width="440" height="320" style="display:block;width:100%;height:100%;cursor:crosshair"></canvas>
+      <div id="map-hover-coords" style="position:absolute;left:8px;top:8px;background:rgba(10,16,24,0.85);padding:3px 8px;border-radius:5px;font-size:11px;border:1px solid rgba(255,255,255,0.2);pointer-events:none;color:var(--gold);font-family:monospace">
+        Cursor: X: 0, Z: 0
+      </div>
+      <div style="position:absolute;right:8px;bottom:8px;display:flex;flex-direction:column;gap:4px">
+        <button id="map-zoom-in" type="button" class="btn-small" style="padding:4px 8px;font-size:13px;background:rgba(20,30,42,0.85)">+</button>
+        <button id="map-zoom-out" type="button" class="btn-small" style="padding:4px 8px;font-size:13px;background:rgba(20,30,42,0.85)">−</button>
+        <button id="map-center-me" type="button" class="btn-small" title="Center on Player" style="padding:4px 8px;font-size:11px;background:rgba(20,30,42,0.85)">🎯</button>
+      </div>
+    </div>
+    <div id="map-info" style="margin-top:10px;display:flex;justify-content:space-between;align-items:center;font-size:13px;background:var(--panel2);padding:8px 12px;border-radius:6px;border:1px solid var(--line)">
+      <div>
+        <span style="color:var(--dim)">Marked Destination:</span>
+        <b id="mark-coords" style="color:var(--gold);margin-left:4px">None (click on map)</b>
+      </div>
+      <div id="mark-dist" style="font-size:12px;color:var(--dim)">—</div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button type="button" id="btn-teleport" class="btn-green" style="flex:1;margin:0;padding:10px 14px;font-size:14px;opacity:0.5;pointer-events:none">
+        ⚡ Teleport to Marked Coordinate [T]
+      </button>
+      <button type="button" id="btn-clear-mark" class="btn-small" style="padding:8px 12px">Clear Marker</button>
+    </div>
   </div>
 </div>
 <div id="cursor"></div>

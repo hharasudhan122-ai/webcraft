@@ -411,6 +411,7 @@ function setB(x,y,z,id,record=true){
   if(lx==0)meshQ.add((cx-1)+','+cy+','+cz);if(lx==15)meshQ.add((cx+1)+','+cy+','+cz);
   if(ly==0)meshQ.add(cx+','+(cy-1)+','+cz);if(ly==15)meshQ.add(cx+','+(cy+1)+','+cz);
   if(lz==0)meshQ.add(cx+','+cy+','+(cz-1));if(lz==15)meshQ.add(cx+','+cy+','+(cz+1));
+  invalidateMapChunk(cx,cz);
   // Clean up door mesh if door was replaced/removed
   unregisterDoorAt(x,y,z);
   unregisterDoorAt(x,y-1,z);
@@ -1046,7 +1047,7 @@ setInterval(()=>{
   for(const k of [...cols]){
     const [x,z]=k.split(',').map(Number);
     if(Math.abs(x-pcx)>R+2||Math.abs(z-pcz)>R+2){
-      cols.delete(k);
+      cols.delete(k);chunkMapTiles.delete(k);
       for(let sy=-4;sy<20;sy++){
         const ck=x+','+sy+','+z;chunks.delete(ck);
         const m=meshes.get(ck);if(m){scene.remove(m);m.geometry.dispose();meshes.delete(ck);}
@@ -1453,10 +1454,12 @@ function openUI(name){
   $('#invp').style.display=(name==='inv'||name==='chest')?'block':'none';
   $('#hostp').style.display=name==='host'?'block':'none';
   if($('#skyp'))$('#skyp').style.display=name==='sky'?'block':'none';
+  if($('#mapp'))$('#mapp').style.display=name==='map'?'block':'none';
   if($('#chatbox'))$('#chatbox').style.display=name==='chat'?'block':'none';
   if(name==='chat')$('#chatin').focus();
   if(name==='inv')renderPalette();
   if(name==='sky')populateSkyLists();
+  if(name==='map')onOpenMap();
 }
 function closeUI(){
   if(ui==='inv'||ui==='chest'){send({t:'closeInv'});if(S.chest)send({t:'closeChest'});}
@@ -1465,6 +1468,7 @@ function closeUI(){
 function openUIHide(){
   $('#invp').style.display=$('#hostp').style.display='none';
   if($('#skyp'))$('#skyp').style.display='none';
+  if($('#mapp'))$('#mapp').style.display='none';
   if($('#chatbox'))$('#chatbox').style.display='none';
   $('#chatin').blur();
   if(!document.body.classList.contains('touch-enabled')){
@@ -1509,6 +1513,8 @@ addEventListener('keydown',e=>{
   if(e.code==='Escape'){if(ui)closeUI();return;}
   if(e.code==='KeyE'){if(ui==='inv'||ui==='chest')closeUI();else if(!ui)openUI('inv');e.preventDefault();return;}
   if(e.code==='KeyK'){if(ui==='sky')closeUI();else if(!ui)openUI('sky');e.preventDefault();return;}
+  if(e.code==='KeyM'){if(ui==='map')closeUI();else if(!ui)openUI('map');e.preventDefault();return;}
+  if(ui==='map'&&e.code==='KeyT'){teleportToMarked();e.preventDefault();return;}
   if(e.code==='Tab'){e.preventDefault();if(S.host){ui==='host'?closeUI():(!ui&&openUI('host'),renderHost());}return;}
   if(ui)return;
 
@@ -1752,6 +1758,8 @@ if(placeBtn){
 
 // Top Bar Buttons
 if($('#btn-inv'))$('#btn-inv').onclick=()=>{ui==='inv'?closeUI():openUI('inv');};
+if($('#btn-map-ui'))$('#btn-map-ui').onclick=()=>{ui==='map'?closeUI():openUI('map');};
+if($('#btn-top-map'))$('#btn-top-map').onclick=()=>{ui==='map'?closeUI():openUI('map');};
 if($('#btn-drop'))$('#btn-drop').onclick=()=>send({t:'dropHeld',slot});
 if($('#btn-chat'))$('#btn-chat').onclick=()=>openUI('chat');
 if($('#btn-fly'))$('#btn-fly').onclick=()=>{if(S.creative){P.fly=!P.fly;P.vy=0;}};
@@ -1769,7 +1777,9 @@ function onMsg(m){
       for(const [k,id] of m.edits){const [x,y,z]=k.split(',').map(Number);setB(x,y,z,id);}
       P.x=m.spawn[0];P.y=m.spawn[1]+1;P.z=m.spawn[2];
       $('#lobby').style.display='none';$('#c').style.display='block';$('#hud').style.display='block';
-      $('#rc').textContent=m.code;modeText();initThree();
+      if($('#coords-hud'))$('#coords-hud').style.display='block';
+      if($('#minimap-box'))$('#minimap-box').style.display='block';
+      $('#rc').textContent=m.code;modeText();initThree();initMapEvents();
       if(m.drops)for(const d of m.drops)addGroundDrop(d);
       syncPlayers(m.players);renderUI();
       if($('#btn-fly'))$('#btn-fly').style.display=m.creative?'flex':'none';
@@ -1829,7 +1839,681 @@ function loop(now){
   updateRain(dt);
   tickTime(dt);
 
+  updateCoordsHUD();
+  updateMinimap(now);
+  if(ui==='map')renderBigMap();
+
   for(const g of others.values())g.position.lerp(new THREE.Vector3(...g.userData.t),.25);
   if(now-tSend>100){tSend=now;send({t:'pos',p:[P.x,P.y,P.z],r:[P.yaw,P.pitch]});}
   renderer.render(scene,camera);
 }
+
+// ==================== MINIMAP & WORLD NAVIGATION SYSTEM ====================
+let minimapCanvas = null, minimapCtx = null;
+let bigmapCanvas = null, bigmapCtx = null;
+const chunkMapTiles = new Map(); // 'cx,cz' -> { canvas, yMap }
+
+let mapPanX = 0, mapPanZ = 0;
+let mapZoom = 1.6; // pixels per block
+let markedPoint = null; // { x, z }
+let isMapDragging = false, dragStartX = 0, dragStartY = 0, dragStartPanX = 0, dragStartPanZ = 0;
+let mapHoverX = 0, mapHoverZ = 0;
+
+function getMapBlockColor(name) {
+  if (!name || name === 'minecraft:air') return null;
+  const n = name.replace('minecraft:', '').toLowerCase();
+  if (n.includes('water')) return [38, 115, 235];
+  if (n.includes('lava')) return [240, 85, 20];
+  if (n.includes('grass_block') || n === 'grass') return [84, 155, 48];
+  if (n.includes('leaves')) return [46, 110, 32];
+  if (n.includes('dirt') || n.includes('path') || n.includes('farmland') || n.includes('podzol')) return [135, 95, 60];
+  if (n.includes('sandstone')) return [215, 200, 145];
+  if (n.includes('sand')) return [225, 215, 155];
+  if (n.includes('cobble') || n.includes('stone') || n.includes('gravel') || n.includes('andesite') || n.includes('diorite')) return [125, 125, 130];
+  if (n.includes('deepslate') || n.includes('bedrock') || n.includes('blackstone')) return [65, 65, 70];
+  if (n.includes('plank') || n.includes('log') || n.includes('wood') || n.includes('door') || n.includes('stair') || n.includes('slab')) {
+    if (n.includes('spruce') || n.includes('dark_oak')) return [80, 55, 35];
+    if (n.includes('birch')) return [200, 185, 140];
+    if (n.includes('acacia')) return [180, 95, 55];
+    if (n.includes('jungle')) return [150, 105, 70];
+    return [160, 125, 75]; // oak
+  }
+  if (n.includes('brick')) return [160, 70, 50];
+  if (n.includes('glass')) return [180, 220, 235];
+  if (n.includes('snow') || n.includes('ice')) return [235, 245, 255];
+  if (n.includes('clay')) return [160, 168, 182];
+  if (n.includes('terracotta')) return [155, 95, 70];
+  if (n.includes('wool') || n.includes('concrete')) {
+    if (n.includes('red')) return [180, 45, 45];
+    if (n.includes('blue')) return [45, 75, 180];
+    if (n.includes('yellow')) return [225, 205, 50];
+    if (n.includes('green')) return [60, 150, 50];
+    if (n.includes('white')) return [240, 240, 240];
+    return [160, 160, 160];
+  }
+  if (n.includes('iron')) return [220, 220, 220];
+  if (n.includes('gold')) return [250, 215, 60];
+  if (n.includes('diamond')) return [90, 230, 225];
+  if (n.includes('nether')) return [115, 35, 40];
+  return [120, 120, 120];
+}
+
+function getTopBlockAt(wx, wz) {
+  const cx = wx >> 4, cz = wz >> 4;
+  if (!cols.has(cx + ',' + cz)) return null;
+  const lx = wx & 15, lz = wz & 15;
+  const colOffset = lx * 256 + lz * 16;
+  let topBlock = null;
+  let waterDepth = 0;
+  let groundY = -64;
+
+  for (let sy = 12; sy >= -4; sy--) {
+    const a = chunks.get(cx + ',' + sy + ',' + cz);
+    if (!a) continue;
+    for (let ly = 15; ly >= 0; ly--) {
+      const id = a[colOffset + ly];
+      if (!id) continue;
+      const name = S.names[id];
+      if (!name || name === 'minecraft:air' || name.endsWith(':air') || name.includes('void')) continue;
+
+      const y = (sy << 4) + ly;
+      if (!topBlock) {
+        topBlock = { id, name, y };
+        groundY = y;
+        if (!name.includes('water')) {
+          return { ...topBlock, waterDepth: 0, groundY };
+        }
+      }
+      if (name.includes('water')) {
+        waterDepth++;
+      } else {
+        groundY = y;
+        return { ...topBlock, waterDepth, groundY };
+      }
+    }
+  }
+  return topBlock ? { ...topBlock, waterDepth, groundY } : null;
+}
+
+function getBiomeAt(wx, wz) {
+  const top = getTopBlockAt(wx, wz);
+  if (!top) return 'Unexplored';
+  const n = top.name.toLowerCase();
+  if (n.includes('water')) return top.waterDepth > 5 ? 'Deep Ocean' : 'River / Lake';
+  if (n.includes('sand')) return 'Desert / Coast';
+  if (n.includes('snow') || n.includes('ice')) return 'Snowy Peaks';
+  if (n.includes('leaves') || n.includes('wood') || n.includes('log')) return 'Forest';
+  if (n.includes('stone') || n.includes('cobble') || top.y > 90) return 'Mountain';
+  if (n.includes('brick') || n.includes('plank') || n.includes('door') || n.includes('glass')) return 'Settlement / House';
+  return 'Plains';
+}
+
+function getChunkMapTile(cx, cz) {
+  const k = cx + ',' + cz;
+  if (!cols.has(k)) return null;
+  let tile = chunkMapTiles.get(k);
+  if (tile) return tile;
+
+  const cvs = document.createElement('canvas');
+  cvs.width = 16; cvs.height = 16;
+  const ctx = cvs.getContext('2d');
+  const imgData = ctx.createImageData(16, 16);
+  const data = imgData.data;
+  const yMap = new Int16Array(256);
+
+  const baseX = cx * 16;
+  const baseZ = cz * 16;
+
+  for (let lz = 0; lz < 16; lz++) {
+    for (let lx = 0; lx < 16; lx++) {
+      const wx = baseX + lx;
+      const wz = baseZ + lz;
+      const top = getTopBlockAt(wx, wz);
+      const pixelIdx = (lz * 16 + lx) * 4;
+
+      if (!top) {
+        data[pixelIdx] = 10;
+        data[pixelIdx + 1] = 16;
+        data[pixelIdx + 2] = 22;
+        data[pixelIdx + 3] = 255;
+        yMap[lz * 16 + lx] = -100;
+        continue;
+      }
+
+      yMap[lz * 16 + lx] = top.y;
+      let rgb = getMapBlockColor(top.name) || [100, 100, 100];
+      let r = rgb[0], g = rgb[1], b = rgb[2];
+
+      if (top.name.includes('water')) {
+        if (top.waterDepth > 4) { r = 18; g = 58; b = 160; }
+        else if (top.waterDepth > 2) { r = 32; g = 95; b = 210; }
+        else { r = 52; g = 148; b = 245; }
+      }
+
+      // Elevation relief shading
+      const northTop = getTopBlockAt(wx, wz - 1);
+      if (northTop) {
+        const diff = top.y - northTop.y;
+        if (diff > 0) {
+          r = Math.min(255, r * 1.15 + 14);
+          g = Math.min(255, g * 1.15 + 14);
+          b = Math.min(255, b * 1.15 + 14);
+        } else if (diff < 0) {
+          r = Math.max(0, r * 0.85 - 10);
+          g = Math.max(0, g * 0.85 - 10);
+          b = Math.max(0, b * 0.85 - 10);
+        }
+      }
+
+      data[pixelIdx] = r;
+      data[pixelIdx + 1] = g;
+      data[pixelIdx + 2] = b;
+      data[pixelIdx + 3] = 255;
+    }
+  }
+
+  ctx.putImageData(imgData, 0, 0);
+  tile = { canvas: cvs, yMap };
+  chunkMapTiles.set(k, tile);
+  return tile;
+}
+
+function invalidateMapChunk(cx, cz) {
+  chunkMapTiles.delete(cx + ',' + cz);
+}
+
+let lastMinimapRender = 0;
+function updateMinimap(now) {
+  if (now - lastMinimapRender < 60) return;
+  lastMinimapRender = now;
+  if (!minimapCanvas) {
+    minimapCanvas = document.getElementById('minimap-canvas');
+    if (minimapCanvas) minimapCtx = minimapCanvas.getContext('2d');
+  }
+  if (!minimapCtx) return;
+
+  const w = minimapCanvas.width;
+  const h = minimapCanvas.height;
+  const ctx = minimapCtx;
+  const cx = w / 2, cy = h / 2;
+  const radius = w / 2 - 3;
+  const scale = 1.25;
+
+  ctx.clearRect(0, 0, w, h);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.clip();
+
+  ctx.fillStyle = '#0a1016';
+  ctx.fillRect(0, 0, w, h);
+
+  const pcx = Math.floor(P.x / 16);
+  const pcz = Math.floor(P.z / 16);
+  const chunkRadius = 4;
+
+  for (let dz = -chunkRadius; dz <= chunkRadius; dz++) {
+    for (let dx = -chunkRadius; dx <= chunkRadius; dx++) {
+      const chX = pcx + dx;
+      const chZ = pcz + dz;
+      const tile = getChunkMapTile(chX, chZ);
+      if (!tile) continue;
+
+      const worldX = chX * 16;
+      const worldZ = chZ * 16;
+      const screenX = cx + (worldX - P.x) * scale;
+      const screenY = cy + (worldZ - P.z) * scale;
+      const tileSize = 16 * scale;
+
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(tile.canvas, screenX, screenY, tileSize, tileSize);
+    }
+  }
+
+  // Draw other players
+  for (const [id, g] of others.entries()) {
+    const ox = g.position.x;
+    const oz = g.position.z;
+    const sx = cx + (ox - P.x) * scale;
+    const sy = cy + (oz - P.z) * scale;
+    if (Math.hypot(sx - cx, sy - cy) < radius - 4) {
+      ctx.fillStyle = '#42a5f5';
+      ctx.beginPath();
+      ctx.arc(sx, sy, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  }
+
+  // Draw marked destination pin (if any)
+  if (markedPoint) {
+    const mx = cx + (markedPoint.x - P.x) * scale;
+    const my = cy + (markedPoint.z - P.z) * scale;
+    const d = Math.hypot(mx - cx, my - cy);
+    let px = mx, py = my;
+    if (d > radius - 8) {
+      px = cx + ((mx - cx) / d) * (radius - 8);
+      py = cy + ((my - cy) / d) * (radius - 8);
+    }
+    const pulse = Math.sin(now * 0.008) * 2;
+    ctx.fillStyle = '#f5c842';
+    ctx.beginPath();
+    ctx.arc(px, py, 4.5 + pulse * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#e04030';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  // Draw player arrow in center pointing in direction P.yaw
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(-P.yaw);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = '#2979ff';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, -7);
+  ctx.lineTo(5, 5);
+  ctx.lineTo(0, 2);
+  ctx.lineTo(-5, 5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+
+  // Crosshair
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cx - 8, cy); ctx.lineTo(cx + 8, cy);
+  ctx.moveTo(cx, cy - 8); ctx.lineTo(cx, cy + 8);
+  ctx.stroke();
+
+  ctx.restore();
+
+  // Compass ring bezel & cardinal points
+  ctx.save();
+  ctx.strokeStyle = 'rgba(245,200,66,0.85)';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.font = 'bold 10px "Barlow Semi Condensed", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ff5252';
+  ctx.fillText('N', cx, 8);
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.fillText('S', cx, h - 8);
+  ctx.fillText('W', 8, cy);
+  ctx.fillText('E', w - 8, cy);
+  ctx.restore();
+}
+
+let lastCoordsUpdate = 0;
+function updateCoordsHUD() {
+  const now = performance.now();
+  if (now - lastCoordsUpdate < 80) return;
+  lastCoordsUpdate = now;
+
+  const xyzEl = document.getElementById('coord-xyz');
+  if (!xyzEl) return;
+
+  const bx = Math.floor(P.x);
+  const by = Math.floor(P.y);
+  const bz = Math.floor(P.z);
+  xyzEl.textContent = `X: ${bx}, Y: ${by}, Z: ${bz}`;
+
+  const deg = ((P.yaw * 180 / Math.PI) % 360 + 360) % 360;
+  let dir = 'South (+Z)';
+  if (deg >= 45 && deg < 135) dir = 'West (-X)';
+  else if (deg >= 135 && deg < 225) dir = 'North (-Z)';
+  else if (deg >= 225 && deg < 315) dir = 'East (+X)';
+
+  const facingEl = document.getElementById('coord-facing');
+  if (facingEl) facingEl.textContent = `Facing: ${dir}`;
+
+  const biomeEl = document.getElementById('coord-biome');
+  if (biomeEl) {
+    const biome = getBiomeAt(bx, bz);
+    biomeEl.textContent = `Biome: ${biome}`;
+  }
+}
+
+function onOpenMap() {
+  if (!bigmapCanvas) {
+    bigmapCanvas = document.getElementById('bigmap-canvas');
+    if (bigmapCanvas) bigmapCtx = bigmapCanvas.getContext('2d');
+    initMapEvents();
+  }
+  mapPanX = P.x;
+  mapPanZ = P.z;
+  updateMarkedInfoUI();
+  renderBigMap();
+}
+
+function renderBigMap() {
+  if (!bigmapCanvas) {
+    bigmapCanvas = document.getElementById('bigmap-canvas');
+    if (bigmapCanvas) bigmapCtx = bigmapCanvas.getContext('2d');
+  }
+  if (!bigmapCtx) return;
+
+  const w = bigmapCanvas.width;
+  const h = bigmapCanvas.height;
+  const ctx = bigmapCtx;
+  const cx = w / 2;
+  const cy = h / 2;
+
+  ctx.fillStyle = '#0c1219';
+  ctx.fillRect(0, 0, w, h);
+
+  const halfVisibleBlocksX = (w / 2) / mapZoom;
+  const halfVisibleBlocksZ = (h / 2) / mapZoom;
+  const minChunkX = Math.floor((mapPanX - halfVisibleBlocksX) / 16);
+  const maxChunkX = Math.floor((mapPanX + halfVisibleBlocksX) / 16);
+  const minChunkZ = Math.floor((mapPanZ - halfVisibleBlocksZ) / 16);
+  const maxChunkZ = Math.floor((mapPanZ + halfVisibleBlocksZ) / 16);
+
+  ctx.imageSmoothingEnabled = false;
+
+  for (let cz = minChunkZ; cz <= maxChunkZ; cz++) {
+    for (let cxIdx = minChunkX; cxIdx <= maxChunkX; cxIdx++) {
+      const tile = getChunkMapTile(cxIdx, cz);
+      const worldX = cxIdx * 16;
+      const worldZ = cz * 16;
+      const screenX = cx + (worldX - mapPanX) * mapZoom;
+      const screenY = cy + (worldZ - mapPanZ) * mapZoom;
+      const size = 16 * mapZoom;
+
+      if (tile) {
+        ctx.drawImage(tile.canvas, screenX, screenY, size, size);
+      } else {
+        ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+        ctx.strokeRect(screenX, screenY, size, size);
+      }
+    }
+  }
+
+  // Draw subtle grid lines
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.lineWidth = 1;
+  const gridStep = 16 * mapZoom;
+  const startGridX = cx + (minChunkX * 16 - mapPanX) * mapZoom;
+  const startGridZ = cy + (minChunkZ * 16 - mapPanZ) * mapZoom;
+  ctx.beginPath();
+  for (let gx = startGridX; gx <= w; gx += gridStep) {
+    ctx.moveTo(gx, 0); ctx.lineTo(gx, h);
+  }
+  for (let gz = startGridZ; gz <= h; gz += gridStep) {
+    ctx.moveTo(0, gz); ctx.lineTo(w, gz);
+  }
+  ctx.stroke();
+
+  // Draw other players
+  for (const [id, g] of others.entries()) {
+    const ox = g.position.x;
+    const oz = g.position.z;
+    const sx = cx + (ox - mapPanX) * mapZoom;
+    const sy = cy + (oz - mapPanZ) * mapZoom;
+    ctx.fillStyle = '#42a5f5';
+    ctx.beginPath();
+    ctx.arc(sx, sy, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  // Draw current player position
+  const playerScreenX = cx + (P.x - mapPanX) * mapZoom;
+  const playerScreenY = cy + (P.z - mapPanZ) * mapZoom;
+
+  ctx.save();
+  ctx.translate(playerScreenX, playerScreenY);
+  ctx.rotate(-P.yaw);
+
+  ctx.fillStyle = 'rgba(58, 143, 255, 0.25)';
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.arc(0, 0, 24 * mapZoom, -Math.PI / 2 - 0.45, -Math.PI / 2 + 0.45);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = '#2979ff';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, -9);
+  ctx.lineTo(6, 6);
+  ctx.lineTo(0, 3);
+  ctx.lineTo(-6, 6);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+
+  // Draw marked destination pin
+  if (markedPoint) {
+    const markScreenX = cx + (markedPoint.x - mapPanX) * mapZoom;
+    const markScreenY = cy + (markedPoint.z - mapPanZ) * mapZoom;
+
+    const now = performance.now();
+    const ring = (now * 0.003) % 1;
+    ctx.strokeStyle = `rgba(245, 200, 66, ${1 - ring})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(markScreenX, markScreenY, 6 + ring * 16, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.fillStyle = '#e53935';
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(markScreenX, markScreenY - 8, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#e53935';
+    ctx.beginPath();
+    ctx.moveTo(markScreenX - 4, markScreenY - 5);
+    ctx.lineTo(markScreenX, markScreenY);
+    ctx.lineTo(markScreenX + 4, markScreenY - 5);
+    ctx.fill();
+
+    ctx.fillStyle = '#f5c842';
+    ctx.beginPath();
+    ctx.arc(markScreenX, markScreenY - 8, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.font = 'bold 11px monospace';
+    ctx.fillStyle = '#0a1016';
+    const tagText = `[${Math.round(markedPoint.x)}, ${Math.round(markedPoint.z)}]`;
+    const tw = ctx.measureText(tagText).width;
+    ctx.fillRect(markScreenX - tw / 2 - 4, markScreenY - 26, tw + 8, 16);
+    ctx.strokeStyle = '#f5c842';
+    ctx.strokeRect(markScreenX - tw / 2 - 4, markScreenY - 26, tw + 8, 16);
+    ctx.fillStyle = '#f5c842';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(tagText, markScreenX, markScreenY - 18);
+  }
+
+  // Center crosshair
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cx - 10, cy); ctx.lineTo(cx + 10, cy);
+  ctx.moveTo(cx, cy - 10); ctx.lineTo(cx, cy + 10);
+  ctx.stroke();
+}
+
+let mapEventsInitialized = false;
+function initMapEvents() {
+  if (mapEventsInitialized || !document.getElementById('bigmap-canvas')) return;
+  mapEventsInitialized = true;
+  const cvs = document.getElementById('bigmap-canvas');
+
+  let dragMoved = false;
+
+  cvs.onmousedown = e => {
+    isMapDragging = true;
+    dragMoved = false;
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+    dragStartPanX = mapPanX;
+    dragStartPanZ = mapPanZ;
+  };
+
+  window.addEventListener('mousemove', e => {
+    if (!bigmapCanvas || ui !== 'map') return;
+    const rect = cvs.getBoundingClientRect();
+    const clientX = e.clientX - rect.left;
+    const clientY = e.clientY - rect.top;
+
+    if (clientX >= 0 && clientX <= rect.width && clientY >= 0 && clientY <= rect.height) {
+      const cx = cvs.width / 2;
+      const cy = cvs.height / 2;
+      const scaleFactorX = cvs.width / rect.width;
+      const scaleFactorY = cvs.height / rect.height;
+      const canvasX = clientX * scaleFactorX;
+      const canvasY = clientY * scaleFactorY;
+
+      mapHoverX = Math.floor(mapPanX + (canvasX - cx) / mapZoom);
+      mapHoverZ = Math.floor(mapPanZ + (canvasY - cy) / mapZoom);
+
+      const top = getTopBlockAt(mapHoverX, mapHoverZ);
+      const biome = getBiomeAt(mapHoverX, mapHoverZ);
+      const hoverEl = document.getElementById('map-hover-coords');
+      if (hoverEl) {
+        let blockDesc = top ? (top.name.replace('minecraft:', '').replace(/_/g, ' ') + ` (Y: ${top.y})`) : 'Unloaded';
+        hoverEl.textContent = `Cursor: X: ${mapHoverX}, Z: ${mapHoverZ} · ${biome} (${blockDesc})`;
+      }
+    }
+
+    if (isMapDragging) {
+      const dx = (e.clientX - dragStartX) / mapZoom;
+      const dz = (e.clientY - dragStartY) / mapZoom;
+      if (Math.abs(e.clientX - dragStartX) > 3 || Math.abs(e.clientY - dragStartY) > 3) {
+        dragMoved = true;
+      }
+      mapPanX = dragStartPanX - dx;
+      mapPanZ = dragStartPanZ - dz;
+      renderBigMap();
+    }
+  });
+
+  window.addEventListener('mouseup', e => {
+    if (!isMapDragging) return;
+    isMapDragging = false;
+    if (!dragMoved && ui === 'map') {
+      const rect = cvs.getBoundingClientRect();
+      const clientX = e.clientX - rect.left;
+      const clientY = e.clientY - rect.top;
+      if (clientX >= 0 && clientX <= rect.width && clientY >= 0 && clientY <= rect.height) {
+        const cx = cvs.width / 2;
+        const cy = cvs.height / 2;
+        const scaleFactorX = cvs.width / rect.width;
+        const scaleFactorY = cvs.height / rect.height;
+        const canvasX = clientX * scaleFactorX;
+        const canvasY = clientY * scaleFactorY;
+
+        const targetX = Math.floor(mapPanX + (canvasX - cx) / mapZoom);
+        const targetZ = Math.floor(mapPanZ + (canvasY - cy) / mapZoom);
+
+        markedPoint = { x: targetX, z: targetZ };
+        updateMarkedInfoUI();
+        renderBigMap();
+      }
+    }
+  });
+
+  cvs.onwheel = e => {
+    e.preventDefault();
+    const zoomFactor = e.deltaY > 0 ? 0.82 : 1.22;
+    mapZoom = Math.max(0.4, Math.min(6.0, mapZoom * zoomFactor));
+    renderBigMap();
+  };
+
+  const btnZoomIn = document.getElementById('map-zoom-in');
+  if (btnZoomIn) btnZoomIn.onclick = () => { mapZoom = Math.min(6.0, mapZoom * 1.3); renderBigMap(); };
+
+  const btnZoomOut = document.getElementById('map-zoom-out');
+  if (btnZoomOut) btnZoomOut.onclick = () => { mapZoom = Math.max(0.4, mapZoom * 0.75); renderBigMap(); };
+
+  const btnCenterMe = document.getElementById('map-center-me');
+  if (btnCenterMe) btnCenterMe.onclick = () => { mapPanX = P.x; mapPanZ = P.z; renderBigMap(); };
+
+  const btnTp = document.getElementById('btn-teleport');
+  if (btnTp) btnTp.onclick = teleportToMarked;
+
+  const btnClear = document.getElementById('btn-clear-mark');
+  if (btnClear) btnClear.onclick = () => {
+    markedPoint = null;
+    updateMarkedInfoUI();
+    renderBigMap();
+  };
+}
+
+function updateMarkedInfoUI() {
+  const markEl = document.getElementById('mark-coords');
+  const distEl = document.getElementById('mark-dist');
+  const btnTp = document.getElementById('btn-teleport');
+  const promptEl = document.getElementById('waypoint-prompt');
+  const promptText = document.getElementById('wp-prompt-text');
+
+  if (markedPoint) {
+    const dist = Math.round(Math.hypot(P.x - markedPoint.x, P.z - markedPoint.z));
+    const biome = getBiomeAt(markedPoint.x, markedPoint.z);
+    if (markEl) markEl.textContent = `X: ${markedPoint.x}, Z: ${markedPoint.z} (${biome})`;
+    if (distEl) distEl.textContent = `${dist}m away`;
+    if (btnTp) {
+      btnTp.style.opacity = '1';
+      btnTp.style.pointerEvents = 'auto';
+    }
+    if (promptEl) {
+      promptEl.style.display = 'flex';
+      if (promptText) promptText.textContent = `Waypoint [${markedPoint.x}, ${markedPoint.z}] · ${dist}m`;
+    }
+  } else {
+    if (markEl) markEl.textContent = 'None (click on map)';
+    if (distEl) distEl.textContent = '—';
+    if (btnTp) {
+      btnTp.style.opacity = '0.5';
+      btnTp.style.pointerEvents = 'none';
+    }
+    if (promptEl) promptEl.style.display = 'none';
+  }
+}
+
+function teleportToMarked() {
+  if (!markedPoint) return;
+  const top = getTopBlockAt(markedPoint.x, markedPoint.z);
+  const safeY = top ? top.groundY + 1.8 : (P.y > -50 ? P.y : 70);
+
+  P.x = markedPoint.x + 0.5;
+  P.y = safeY;
+  P.z = markedPoint.z + 0.5;
+  P.vx = 0; P.vy = 0; P.vz = 0;
+
+  streamWorld(P.x, P.z);
+  camera.position.set(P.x, P.y + 1.62, P.z);
+
+  send({ t: 'pos', p: [P.x, P.y, P.z], r: [P.yaw, P.pitch] });
+  playPopSound();
+  chatLine('System', `⚡ Teleported to [X: ${Math.round(P.x)}, Y: ${Math.round(P.y)}, Z: ${Math.round(P.z)}]`);
+
+  closeUI();
+  updateMarkedInfoUI();
+}
+
+window.openUI = openUI;
+window.closeUI = closeUI;
+window.teleportToMarked = teleportToMarked;
+
